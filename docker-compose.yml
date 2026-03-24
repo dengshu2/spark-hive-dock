@@ -1,0 +1,231 @@
+# ============================================================
+# Docker Compose - spark-hive-dock
+#
+# Spark SQL cluster with Hive Metastore on Hadoop HDFS.
+#
+# Services:
+#   - mysql           : Metastore backend (MySQL 8.0)
+#   - namenode        : HDFS NameNode
+#   - datanode        : HDFS DataNode
+#   - hive-metastore  : Hive Metastore Service (metadata only)
+#   - spark-master    : Spark Master + Thrift Server (JDBC)
+#   - spark-worker    : Spark Worker
+#
+# Usage:
+#   docker compose up -d --build
+#   docker compose logs -f spark-master
+#   docker compose down -v   (destroy volumes)
+# ============================================================
+
+services:
+
+  # --------------------------------------------------------
+  # MySQL - Hive Metastore Backend
+  # --------------------------------------------------------
+  mysql:
+    image: mysql:${MYSQL_VERSION:-8.0}
+    container_name: mysql
+    hostname: mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rootpass2024}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-hive_metastore}
+      MYSQL_USER: ${MYSQL_USER:-hive}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-hive2024}
+    ports:
+      - "127.0.0.1:3306:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./mysql/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:-rootpass2024}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    networks:
+      - hive-net
+    restart: unless-stopped
+
+  # --------------------------------------------------------
+  # HDFS NameNode
+  # --------------------------------------------------------
+  namenode:
+    build:
+      context: ./hadoop
+      args:
+        HADOOP_VERSION: ${HADOOP_VERSION:-3.3.6}
+    image: hadoop-base:${HADOOP_VERSION:-3.3.6}
+    container_name: namenode
+    hostname: namenode
+    environment:
+      HADOOP_ROLE: namenode
+    ports:
+      - "127.0.0.1:9870:9870"   # Web UI
+      - "127.0.0.1:19000:9000"  # HDFS RPC (remapped to avoid host conflict)
+    volumes:
+      - namenode-data:/data/namenode
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z localhost 9000"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          memory: 768M
+    networks:
+      - hive-net
+    restart: unless-stopped
+
+  # --------------------------------------------------------
+  # HDFS DataNode
+  # --------------------------------------------------------
+  datanode:
+    image: hadoop-base:${HADOOP_VERSION:-3.3.6}
+    container_name: datanode
+    hostname: datanode
+    environment:
+      HADOOP_ROLE: datanode
+    ports:
+      - "127.0.0.1:9864:9864"   # Web UI
+    volumes:
+      - datanode-data:/data/datanode
+    depends_on:
+      namenode:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://datanode:9864/jmx || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          memory: 768M
+    networks:
+      - hive-net
+    restart: unless-stopped
+
+  # --------------------------------------------------------
+  # Hive Metastore (metadata service only)
+  # --------------------------------------------------------
+  hive-metastore:
+    build:
+      context: ./hive
+      args:
+        HIVE_VERSION: ${HIVE_VERSION:-3.1.3}
+    image: hive-metastore:${HIVE_VERSION:-3.1.3}
+    container_name: hive-metastore
+    hostname: hive-metastore
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rootpass2024}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-hive_metastore}
+      MYSQL_USER: ${MYSQL_USER:-hive}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-hive2024}
+    ports:
+      - "127.0.0.1:9083:9083"   # Thrift Metastore
+    depends_on:
+      mysql:
+        condition: service_healthy
+      namenode:
+        condition: service_healthy
+      datanode:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z localhost 9083"]
+      interval: 15s
+      timeout: 10s
+      retries: 15
+      start_period: 120s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+    networks:
+      - hive-net
+    restart: unless-stopped
+
+  # --------------------------------------------------------
+  # Spark Master + Thrift Server
+  # --------------------------------------------------------
+  spark-master:
+    build:
+      context: ./spark
+      args:
+        SPARK_VERSION: ${SPARK_VERSION:-3.5.3}
+    image: spark:${SPARK_VERSION:-3.5.3}
+    container_name: spark-master
+    hostname: spark-master
+    environment:
+      SPARK_ROLE: master
+    ports:
+      - "127.0.0.1:18080:8080"  # Spark Master Web UI
+      - "127.0.0.1:10000:10000" # Thrift Server (JDBC)
+      - "127.0.0.1:4040:4040"   # Spark Application UI
+    depends_on:
+      hive-metastore:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z localhost 10000"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 3G
+    networks:
+      - hive-net
+    restart: unless-stopped
+
+  # --------------------------------------------------------
+  # Spark Worker
+  # --------------------------------------------------------
+  spark-worker:
+    image: spark:${SPARK_VERSION:-3.5.3}
+    container_name: spark-worker
+    hostname: spark-worker
+    environment:
+      SPARK_ROLE: worker
+    depends_on:
+      spark-master:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z localhost 8081"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+    networks:
+      - hive-net
+    restart: unless-stopped
+
+# ============================================================
+# Volumes
+# ============================================================
+volumes:
+  mysql-data:
+    driver: local
+  namenode-data:
+    driver: local
+  datanode-data:
+    driver: local
+
+# ============================================================
+# Network
+# ============================================================
+networks:
+  hive-net:
+    driver: bridge
+    name: hive-net
