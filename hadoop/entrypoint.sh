@@ -57,8 +57,6 @@ case "${HADOOP_ROLE}" in
         exec hdfs datanode
         ;;
 
-
-
     *)
         echo "[entrypoint] ERROR: Unknown HADOOP_ROLE '${HADOOP_ROLE}'"
         echo "[entrypoint] Valid roles: namenode, datanode"
