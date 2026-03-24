@@ -150,6 +150,7 @@ spark-hive-dock/
 | 容器启动顺序 | `healthcheck` + `depends_on: condition` 保证依赖链 |
 | 构建顺序 | Makefile 保证 hadoop-base 先于 hive-metastore 构建 |
 | 首次运行失败残留 | 执行 `make clean` 清除卷后重试 |
+| Filesystem closed 异常 | `core-site.xml` 设置 `fs.hdfs.impl.disable.cache=true`，避免共享 DFSClient 被提前关闭 |
 
 > **注意**: `spark/core-site.xml` 是 `hadoop/core-site.xml` 的副本。如果修改了 HDFS 配置，请同时更新两份文件。
 

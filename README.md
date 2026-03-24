@@ -149,6 +149,7 @@ All configurable via `.env`. Secrets are injected at runtime — no credentials 
 | Container startup order | `healthcheck` + `depends_on: condition` enforces sequencing |
 | Build dependency order | Makefile ensures hadoop-base is built before hive-metastore |
 | First-run failure residue | Run `make clean` to clear volumes before retrying |
+| Filesystem closed IOException | `fs.hdfs.impl.disable.cache=true` in `core-site.xml` prevents shared DFSClient closure |
 
 > **Note**: `spark/core-site.xml` is a copy of `hadoop/core-site.xml`. If you modify HDFS settings, update both files.
 
