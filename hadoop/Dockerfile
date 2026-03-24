@@ -11,7 +11,10 @@ LABEL description="Hadoop 3.3.6 base image with OpenJDK 8"
 
 # Build arguments
 ARG HADOOP_VERSION=3.3.6
-ARG HADOOP_URL=https://dlcdn.apache.org/hadoop/common/hadoop-${HADOOP_VERSION}/hadoop-${HADOOP_VERSION}.tar.gz
+# Apache mirror for faster downloads (use Chinese mirrors for better speed in China)
+# Default: https://dlcdn.apache.org  Chinese: https://mirrors.tuna.tsinghua.edu.cn/apache
+ARG APACHE_MIRROR=https://dlcdn.apache.org
+ARG HADOOP_URL=${APACHE_MIRROR}/hadoop/common/hadoop-${HADOOP_VERSION}/hadoop-${HADOOP_VERSION}.tar.gz
 
 # Environment variables
 ENV HADOOP_VERSION=${HADOOP_VERSION}
@@ -22,8 +25,7 @@ ENV JAVA_HOME=/opt/java/openjdk
 ENV HDFS_NAMENODE_USER=root
 ENV HDFS_DATANODE_USER=root
 ENV HDFS_SECONDARYNAMENODE_USER=root
-ENV YARN_RESOURCEMANAGER_USER=root
-ENV YARN_NODEMANAGER_USER=root
+
 
 # Install dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -42,13 +44,12 @@ RUN --mount=type=cache,target=/tmp/downloads \
     && rm -rf ${HADOOP_HOME}/share/doc
 
 # Create data directories
-RUN mkdir -p /data/namenode /data/datanode /data/yarn/local /data/yarn/logs
+RUN mkdir -p /data/namenode /data/datanode
 
 # Copy configuration files
 COPY core-site.xml ${HADOOP_CONF_DIR}/core-site.xml
 COPY hdfs-site.xml ${HADOOP_CONF_DIR}/hdfs-site.xml
-COPY yarn-site.xml ${HADOOP_CONF_DIR}/yarn-site.xml
-COPY mapred-site.xml ${HADOOP_CONF_DIR}/mapred-site.xml
+
 
 # Copy entrypoint
 COPY entrypoint.sh /entrypoint.sh

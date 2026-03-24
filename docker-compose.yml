@@ -58,6 +58,7 @@ services:
       context: ./hadoop
       args:
         HADOOP_VERSION: ${HADOOP_VERSION:-3.3.6}
+        APACHE_MIRROR: ${APACHE_MIRROR_HADOOP:-https://dlcdn.apache.org}
     image: hadoop-base:${HADOOP_VERSION:-3.3.6}
     container_name: namenode
     hostname: namenode
@@ -120,6 +121,7 @@ services:
       context: ./hive
       args:
         HIVE_VERSION: ${HIVE_VERSION:-3.1.3}
+        APACHE_MIRROR: ${APACHE_MIRROR_HIVE:-https://archive.apache.org/dist}
     image: hive-metastore:${HIVE_VERSION:-3.1.3}
     container_name: hive-metastore
     hostname: hive-metastore
@@ -159,6 +161,7 @@ services:
       context: ./spark
       args:
         SPARK_VERSION: ${SPARK_VERSION:-3.5.3}
+        APACHE_MIRROR: ${APACHE_MIRROR_SPARK:-https://archive.apache.org/dist}
     image: spark:${SPARK_VERSION:-3.5.3}
     container_name: spark-master
     hostname: spark-master

@@ -12,7 +12,10 @@ LABEL description="Hive 3.1.3 Metastore on Hadoop 3.3.6"
 # Build arguments
 ARG HIVE_VERSION=3.1.3
 ARG MYSQL_CONNECTOR_VERSION=8.0.28
-ARG HIVE_URL=https://archive.apache.org/dist/hive/hive-${HIVE_VERSION}/apache-hive-${HIVE_VERSION}-bin.tar.gz
+# Apache mirror for faster downloads (use Chinese mirrors for better speed in China)
+# Default: https://archive.apache.org/dist  Chinese: https://mirrors.tuna.tsinghua.edu.cn/apache
+ARG APACHE_MIRROR=https://archive.apache.org/dist
+ARG HIVE_URL=${APACHE_MIRROR}/hive/hive-${HIVE_VERSION}/apache-hive-${HIVE_VERSION}-bin.tar.gz
 ARG MYSQL_CONNECTOR_URL=https://repo1.maven.org/maven2/mysql/mysql-connector-java/${MYSQL_CONNECTOR_VERSION}/mysql-connector-java-${MYSQL_CONNECTOR_VERSION}.jar
 
 # Environment variables

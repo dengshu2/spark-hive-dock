@@ -57,29 +57,11 @@ case "${HADOOP_ROLE}" in
         exec hdfs datanode
         ;;
 
-    resourcemanager)
-        echo "[entrypoint] Starting as ResourceManager ..."
 
-        # Wait for NameNode to be available
-        wait_for_port namenode 9000 60
-
-        echo "[entrypoint] Launching ResourceManager ..."
-        exec yarn resourcemanager
-        ;;
-
-    nodemanager)
-        echo "[entrypoint] Starting as NodeManager ..."
-
-        # Wait for ResourceManager to be available
-        wait_for_port resourcemanager 8088 60
-
-        echo "[entrypoint] Launching NodeManager ..."
-        exec yarn nodemanager
-        ;;
 
     *)
         echo "[entrypoint] ERROR: Unknown HADOOP_ROLE '${HADOOP_ROLE}'"
-        echo "[entrypoint] Valid roles: namenode, datanode, resourcemanager, nodemanager"
+        echo "[entrypoint] Valid roles: namenode, datanode"
         exit 1
         ;;
 esac
