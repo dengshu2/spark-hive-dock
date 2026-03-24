@@ -3,6 +3,7 @@
 .env
 .env.example
 README.md
+Makefile
 scripts/
 *.md
 LICENSE
