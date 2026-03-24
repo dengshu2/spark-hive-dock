@@ -1,5 +1,7 @@
 # spark-hive-dock
 
+English | [中文](README_CN.md)
+
 Dockerized Spark SQL cluster with Hive Metastore on Hadoop HDFS. MySQL serves as the Metastore backend. Designed for development and testing — **not for production use**.
 
 ## Version Matrix
@@ -45,21 +47,40 @@ Dockerized Spark SQL cluster with Hive Metastore on Hadoop HDFS. MySQL serves as
 ## Quick Start
 
 ```bash
-# 1. Copy environment template and adjust passwords
+# 1. Copy environment template and set your own passwords
 cp .env.example .env
+# Edit .env and replace <CHANGE_ME> with actual passwords
 
 # 2. Build and start the cluster
-docker compose up -d --build
+make up
 
-# 3. Monitor startup (first run takes a few minutes)
-docker compose logs -f hive-metastore spark-master
+# 3. Check service status
+make status
 
 # 4. Connect via Beeline
 bash scripts/beeline-connect.sh
 
 # 5. (Optional) Load test data
 bash scripts/init-test-data.sh
+
+# 6. Run smoke test
+make test
 ```
+
+## Make Commands
+
+| Command | Description |
+|---------|-------------|
+| `make build` | Build all images in correct dependency order (hadoop-base → hive + spark) |
+| `make up` | Build + start all services |
+| `make down` | Stop and remove containers |
+| `make clean` | Stop and remove containers, volumes, and local images |
+| `make test` | Run smoke test (CREATE → INSERT → SELECT → DROP) |
+| `make status` | Show service health status |
+| `make logs` | Follow all service logs |
+| `make restart` | Restart all services |
+
+> Why a Makefile? The `hive-metastore` image depends on `hadoop-base` (`FROM hadoop-base:3.3.6`), but `docker compose build` doesn't guarantee build ordering. The Makefile ensures hadoop-base is built before hive-metastore.
 
 ## Web UIs
 
@@ -74,15 +95,15 @@ bash scripts/init-test-data.sh
 
 ```
 spark-hive-dock/
+├── Makefile                  # Build, start, and test entry point
 ├── docker-compose.yml        # Service orchestration (6 containers)
 ├── .env.example              # Environment template
+├── .dockerignore             # Build context exclusions
 ├── hadoop/
 │   ├── Dockerfile            # Hadoop 3.3.6 + JDK 8 base image
 │   ├── core-site.xml         # HDFS default filesystem
 │   ├── hdfs-site.xml         # HDFS replication & storage
-│   ├── yarn-site.xml         # YARN config (reserved for expansion)
-│   ├── mapred-site.xml       # MapReduce framework config (reserved)
-│   └── entrypoint.sh         # Multi-role startup script
+│   └── entrypoint.sh         # Multi-role startup (namenode / datanode)
 ├── hive/
 │   ├── Dockerfile            # Hive 3.1.3 Metastore image
 │   ├── hive-site.xml         # Metastore connection (templated)
@@ -104,17 +125,20 @@ spark-hive-dock/
 
 All configurable via `.env`. Secrets are injected at runtime — no credentials are stored in committed config files.
 
-| Variable | Default | Used By |
-|----------|---------|---------|
-| `HADOOP_VERSION` | 3.3.6 | hadoop, hive |
-| `HIVE_VERSION` | 3.1.3 | hive |
-| `SPARK_VERSION` | 3.5.3 | spark |
-| `MYSQL_VERSION` | 8.0 | mysql |
-| `MYSQL_ROOT_PASSWORD` | rootpass2024 | mysql, hive |
-| `MYSQL_DATABASE` | hive_metastore | mysql, hive |
-| `MYSQL_USER` | hive | mysql, hive |
-| `MYSQL_PASSWORD` | hive2024 | mysql, hive |
-| `HDFS_REPLICATION` | 1 | hadoop |
+| Variable | Description | Used By |
+|----------|-------------|---------|
+| `HADOOP_VERSION` | Hadoop version | hadoop, hive |
+| `HIVE_VERSION` | Hive version | hive |
+| `SPARK_VERSION` | Spark version | spark |
+| `MYSQL_VERSION` | MySQL version | mysql |
+| `MYSQL_ROOT_PASSWORD` | MySQL root password | mysql, hive |
+| `MYSQL_DATABASE` | Metastore database name | mysql, hive |
+| `MYSQL_USER` | Metastore database user | mysql, hive |
+| `MYSQL_PASSWORD` | Metastore database password | mysql, hive |
+| `HDFS_REPLICATION` | HDFS replication factor | hadoop |
+| `APACHE_MIRROR_HADOOP` | Hadoop download mirror | hadoop |
+| `APACHE_MIRROR_SPARK` | Spark download mirror | spark |
+| `APACHE_MIRROR_HIVE` | Hive download mirror | hive |
 
 ## Known Issues & Solutions
 
@@ -126,9 +150,8 @@ All configurable via `.env`. Secrets are injected at runtime — no credentials 
 | MySQL timezone error | JDBC URL includes `serverTimezone=UTC` |
 | Metastore not initialized | Entrypoint runs `schematool -initSchema` idempotently |
 | Container startup order | `healthcheck` + `depends_on: condition` enforces sequencing |
-| First-run failure residue | Run `docker compose down -v` to clear volumes before retrying |
-
-> **Note**: `hadoop/yarn-site.xml` and `hadoop/mapred-site.xml` are included in the base image for forward compatibility. The current deployment uses Spark standalone mode — YARN services are not started.
+| Build dependency order | Makefile ensures hadoop-base is built before hive-metastore |
+| First-run failure residue | Run `make clean` to clear volumes before retrying |
 
 > **Note**: `spark/core-site.xml` is a copy of `hadoop/core-site.xml`. If you modify HDFS settings, update both files.
 
@@ -136,19 +159,19 @@ All configurable via `.env`. Secrets are injected at runtime — no credentials 
 
 ```bash
 # Start
-docker compose up -d
+make up
 
 # Stop (keep data)
-docker compose down
+make down
 
 # Stop and destroy all data
-docker compose down -v
+make clean
 
 # Rebuild after config changes
-docker compose up -d --build
+make restart
 
 # View logs
-docker compose logs -f <service-name>
+make logs
 ```
 
 ## ⚠️ Development Use Only
