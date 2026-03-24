@@ -11,10 +11,7 @@ LABEL description="Hadoop 3.3.6 base image with OpenJDK 8"
 
 # Build arguments
 ARG HADOOP_VERSION=3.3.6
-# Apache mirror for faster downloads (use Chinese mirrors for better speed in China)
-# Default: https://dlcdn.apache.org  Chinese: https://mirrors.tuna.tsinghua.edu.cn/apache
-ARG APACHE_MIRROR=https://dlcdn.apache.org
-ARG HADOOP_URL=${APACHE_MIRROR}/hadoop/common/hadoop-${HADOOP_VERSION}/hadoop-${HADOOP_VERSION}.tar.gz
+ARG HADOOP_URL=https://dlcdn.apache.org/hadoop/common/hadoop-${HADOOP_VERSION}/hadoop-${HADOOP_VERSION}.tar.gz
 
 # Environment variables
 ENV HADOOP_VERSION=${HADOOP_VERSION}

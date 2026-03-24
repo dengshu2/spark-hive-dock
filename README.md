@@ -136,9 +136,6 @@ All configurable via `.env`. Secrets are injected at runtime — no credentials 
 | `MYSQL_USER` | Metastore database user | mysql, hive |
 | `MYSQL_PASSWORD` | Metastore database password | mysql, hive |
 | `HDFS_REPLICATION` | HDFS replication factor | hadoop |
-| `APACHE_MIRROR_HADOOP` | Hadoop download mirror | hadoop |
-| `APACHE_MIRROR_SPARK` | Spark download mirror | spark |
-| `APACHE_MIRROR_HIVE` | Hive download mirror | hive |
 
 ## Known Issues & Solutions
 

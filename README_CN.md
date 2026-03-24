@@ -67,16 +67,6 @@ bash scripts/init-test-data.sh
 make test
 ```
 
-### 中国用户加速构建
-
-在 `.env` 中配置国内镜像源（推荐清华源）：
-
-```bash
-APACHE_MIRROR_HADOOP=https://mirrors.tuna.tsinghua.edu.cn/apache
-# Spark 3.5.3 和 Hive 3.1.3 为归档版本，清华源不提供，需使用 Apache 官方源
-APACHE_MIRROR_SPARK=https://archive.apache.org/dist
-APACHE_MIRROR_HIVE=https://archive.apache.org/dist
-```
 
 ## Make 命令
 
@@ -147,9 +137,6 @@ spark-hive-dock/
 | `MYSQL_USER` | Metastore 数据库用户 | mysql, hive |
 | `MYSQL_PASSWORD` | Metastore 数据库密码 | mysql, hive |
 | `HDFS_REPLICATION` | HDFS 副本数 | hadoop |
-| `APACHE_MIRROR_HADOOP` | Hadoop 下载镜像源 | hadoop |
-| `APACHE_MIRROR_SPARK` | Spark 下载镜像源 | spark |
-| `APACHE_MIRROR_HIVE` | Hive 下载镜像源 | hive |
 
 ## 已知问题与解决方案
 
