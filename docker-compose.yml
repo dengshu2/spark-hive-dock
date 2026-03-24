@@ -27,6 +27,7 @@ services:
     container_name: mysql
     hostname: mysql
     environment:
+      TZ: ${TZ:-Asia/Shanghai}
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rootpass2024}
       MYSQL_DATABASE: ${MYSQL_DATABASE:-hive_metastore}
       MYSQL_USER: ${MYSQL_USER:-hive}
@@ -62,6 +63,7 @@ services:
     container_name: namenode
     hostname: namenode
     environment:
+      TZ: ${TZ:-Asia/Shanghai}
       HADOOP_ROLE: namenode
     ports:
       - "127.0.0.1:9870:9870"   # Web UI
@@ -90,6 +92,7 @@ services:
     container_name: datanode
     hostname: datanode
     environment:
+      TZ: ${TZ:-Asia/Shanghai}
       HADOOP_ROLE: datanode
     ports:
       - "127.0.0.1:9864:9864"   # Web UI
@@ -124,6 +127,7 @@ services:
     container_name: hive-metastore
     hostname: hive-metastore
     environment:
+      TZ: ${TZ:-Asia/Shanghai}
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rootpass2024}
       MYSQL_DATABASE: ${MYSQL_DATABASE:-hive_metastore}
       MYSQL_USER: ${MYSQL_USER:-hive}
@@ -138,7 +142,7 @@ services:
       datanode:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "nc -z localhost 9083"]
+      test: ["CMD-SHELL", "PORT_HEX=$$(printf '%X' 9083); grep -q \":$${PORT_HEX} \" /proc/net/tcp6 2>/dev/null || grep -q \":$${PORT_HEX} \" /proc/net/tcp 2>/dev/null"]
       interval: 15s
       timeout: 10s
       retries: 15
@@ -163,6 +167,7 @@ services:
     container_name: spark-master
     hostname: spark-master
     environment:
+      TZ: ${TZ:-Asia/Shanghai}
       SPARK_ROLE: master
     ports:
       - "127.0.0.1:18080:8080"  # Spark Master Web UI
@@ -172,7 +177,7 @@ services:
       hive-metastore:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "nc -z localhost 10000"]
+      test: ["CMD-SHELL", "PORT_HEX=$$(printf '%X' 10000); grep -q \":$${PORT_HEX} \" /proc/net/tcp6 2>/dev/null || grep -q \":$${PORT_HEX} \" /proc/net/tcp 2>/dev/null"]
       interval: 15s
       timeout: 10s
       retries: 20
@@ -193,6 +198,7 @@ services:
     container_name: spark-worker
     hostname: spark-worker
     environment:
+      TZ: ${TZ:-Asia/Shanghai}
       SPARK_ROLE: worker
     depends_on:
       spark-master:
