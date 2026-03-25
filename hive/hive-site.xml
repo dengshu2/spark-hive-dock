@@ -32,7 +32,7 @@
     <!-- ====================================================== -->
     <property>
         <name>hive.metastore.uris</name>
-        <value>thrift://hive-metastore:9083</value>
+        <value>thrift://hive-metastore.hive-net:9083</value>
     </property>
     <property>
         <name>hive.metastore.warehouse.dir</name>
@@ -45,6 +45,21 @@
     <property>
         <name>datanucleus.schema.autoCreateAll</name>
         <value>false</value>
+    </property>
+    <!-- ====================================================== -->
+    <!-- Kerberos / SASL Authentication                          -->
+    <!-- ====================================================== -->
+    <property>
+        <name>hive.metastore.sasl.enabled</name>
+        <value>true</value>
+    </property>
+    <property>
+        <name>hive.metastore.kerberos.principal</name>
+        <value>hive/_HOST@EXAMPLE.COM</value>
+    </property>
+    <property>
+        <name>hive.metastore.kerberos.keytab.file</name>
+        <value>/etc/security/keytabs/hive.keytab</value>
     </property>
 
 </configuration>

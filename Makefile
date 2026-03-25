@@ -1,5 +1,5 @@
 # ============================================================
-# spark-hive-dock Makefile
+# spark-hive-dock Makefile (Kerberized)
 #
 # Handles build-time dependency: hive-metastore FROM hadoop-base
 # Usage:
@@ -8,19 +8,23 @@
 #   make down    — stop and remove containers
 #   make clean   — stop, remove containers, volumes, and images
 #   make test    — run smoke test against Spark Thrift Server
+#   make kinit   — verify Kerberos tickets on all services
 #   make logs    — follow all service logs
 #   make status  — show service health status
 # ============================================================
 
-.PHONY: build up down clean test logs status restart
+.PHONY: build up down clean test kinit logs status restart
 
 # -- Build -----------------------------------------------
-# Step 1: hadoop-base (no dependencies)
-# Step 2: hive-metastore (FROM hadoop-base) + spark (independent)
+# Step 1: kdc (no dependencies)
+# Step 2: hadoop-base (no dependencies)
+# Step 3: hive-metastore (FROM hadoop-base) + spark (independent)
 build:
-	@echo "=== [1/2] Building hadoop-base ==="
+	@echo "=== [1/3] Building KDC ==="
+	docker compose build kdc
+	@echo "=== [2/3] Building hadoop-base ==="
 	docker compose build namenode
-	@echo "=== [2/2] Building hive-metastore + spark (parallel) ==="
+	@echo "=== [3/3] Building hive-metastore + spark (parallel) ==="
 	docker compose build hive-metastore spark-master
 
 # -- Lifecycle -------------------------------------------
@@ -44,11 +48,26 @@ logs:
 status:
 	@docker compose ps --format 'table {{.Name}}\t{{.Status}}\t{{.Ports}}'
 
+# -- Kerberos Verification --------------------------------
+kinit:
+	@echo "=== Kerberos Ticket Status ==="
+	@echo "--- KDC ---"
+	@docker exec kdc kadmin.local -q "listprincs" 2>/dev/null | head -20
+	@echo ""
+	@echo "--- NameNode ---"
+	@docker exec namenode klist 2>/dev/null || echo "No ticket"
+	@echo ""
+	@echo "--- Hive Metastore ---"
+	@docker exec hive-metastore klist 2>/dev/null || echo "No ticket"
+	@echo ""
+	@echo "--- Spark Master ---"
+	@docker exec spark-master klist 2>/dev/null || echo "No ticket"
+
 # -- Smoke Test ------------------------------------------
 test:
-	@echo "=== Smoke Test: Spark SQL via Thrift ==="
+	@echo "=== Smoke Test: Spark SQL via Thrift (Kerberos) ==="
 	@docker exec spark-master /opt/spark/bin/beeline \
-		-u "jdbc:hive2://localhost:10000" -n spark \
+		-u "jdbc:hive2://spark-master.hive-net:10000/;principal=spark/spark-master.hive-net@EXAMPLE.COM" \
 		-e "CREATE DATABASE IF NOT EXISTS smoke_test; \
 		    USE smoke_test; \
 		    CREATE TABLE IF NOT EXISTS t1 (id INT, name STRING); \
@@ -65,6 +84,6 @@ _wait:
 		HEALTHY=$$(docker compose ps --format '{{.Status}}' 2>/dev/null | grep -c "(healthy)"); \
 		TOTAL=$$(docker compose ps --format '{{.Name}}' 2>/dev/null | wc -l); \
 		printf "\r  Healthy: %s/%s" "$$HEALTHY" "$$TOTAL"; \
-		if [ "$$HEALTHY" -ge 6 ]; then printf "\n"; $(MAKE) --no-print-directory status; break; fi; \
+		if [ "$$HEALTHY" -ge 7 ]; then printf "\n"; $(MAKE) --no-print-directory status; break; fi; \
 		sleep 10; \
 	done

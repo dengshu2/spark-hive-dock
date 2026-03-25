@@ -9,7 +9,7 @@
     <!-- Default filesystem URI -->
     <property>
         <name>fs.defaultFS</name>
-        <value>hdfs://namenode:9000</value>
+        <value>hdfs://namenode.hive-net:9000</value>
     </property>
 
     <!-- Proxy user settings for Hive -->
@@ -28,6 +28,28 @@
     <property>
         <name>hadoop.proxyuser.hive.groups</name>
         <value>*</value>
+    </property>
+    <property>
+        <name>hadoop.proxyuser.spark.hosts</name>
+        <value>*</value>
+    </property>
+    <property>
+        <name>hadoop.proxyuser.spark.groups</name>
+        <value>*</value>
+    </property>
+
+    <!-- Kerberos authentication -->
+    <property>
+        <name>hadoop.security.authentication</name>
+        <value>kerberos</value>
+    </property>
+    <property>
+        <name>hadoop.security.authorization</name>
+        <value>true</value>
+    </property>
+    <property>
+        <name>hadoop.rpc.protection</name>
+        <value>authentication</value>
     </property>
 
     <!-- Disable FileSystem cache: prevents Hive from closing a shared

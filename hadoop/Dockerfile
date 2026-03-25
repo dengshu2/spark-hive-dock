@@ -7,7 +7,7 @@
 FROM eclipse-temurin:8-jdk AS hadoop-base
 
 LABEL maintainer="hive-docker"
-LABEL description="Hadoop 3.3.6 base image with OpenJDK 8"
+LABEL description="Hadoop 3.3.6 base image with OpenJDK 8 + Kerberos"
 
 # Build arguments
 ARG HADOOP_VERSION=3.3.6
@@ -22,11 +22,14 @@ ENV JAVA_HOME=/opt/java/openjdk
 ENV HDFS_NAMENODE_USER=root
 ENV HDFS_DATANODE_USER=root
 ENV HDFS_SECONDARYNAMENODE_USER=root
+# NOTE: HDFS_DATANODE_SECURE_USER is intentionally NOT set.
+# With dfs.data.transfer.protection=authentication (SASL), the DataNode
+# uses unprivileged ports and does not need the secure user mechanism.
 
-
-# Install dependencies
+# Install dependencies (includes Kerberos client)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
+    krb5-user \
     netcat-openbsd \
     procps \
     && rm -rf /var/lib/apt/lists/*
@@ -46,7 +49,6 @@ RUN mkdir -p /data/namenode /data/datanode
 # Copy configuration files
 COPY core-site.xml ${HADOOP_CONF_DIR}/core-site.xml
 COPY hdfs-site.xml ${HADOOP_CONF_DIR}/hdfs-site.xml
-
 
 # Copy entrypoint
 COPY entrypoint.sh /entrypoint.sh

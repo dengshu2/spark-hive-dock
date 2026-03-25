@@ -1,9 +1,11 @@
 # ============================================================
-# Docker Compose - spark-hive-dock
+# Docker Compose - spark-hive-dock (Kerberized)
 #
-# Spark SQL cluster with Hive Metastore on Hadoop HDFS.
+# Spark SQL cluster with Hive Metastore on Hadoop HDFS,
+# secured with MIT Kerberos authentication.
 #
 # Services:
+#   - kdc             : MIT Kerberos KDC (authentication center)
 #   - mysql           : Metastore backend (MySQL 8.0)
 #   - namenode        : HDFS NameNode
 #   - datanode        : HDFS DataNode
@@ -18,6 +20,36 @@
 # ============================================================
 
 services:
+
+  # --------------------------------------------------------
+  # KDC - MIT Kerberos Key Distribution Center
+  # --------------------------------------------------------
+  kdc:
+    build:
+      context: ./kdc
+    image: kdc:latest
+    container_name: kdc
+    hostname: kdc
+    domainname: hive-net
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      KRB5_REALM: ${KRB5_REALM:-EXAMPLE.COM}
+      KRB5_KDC_PASSWORD: ${KRB5_KDC_PASSWORD:-kdc_admin_2024}
+    volumes:
+      - keytabs:/etc/security/keytabs
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /etc/security/keytabs/.kdc-ready"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    networks:
+      - hive-net
+    restart: unless-stopped
 
   # --------------------------------------------------------
   # MySQL - Hive Metastore Backend
@@ -62,6 +94,7 @@ services:
     image: hadoop-base:${HADOOP_VERSION:-3.3.6}
     container_name: namenode
     hostname: namenode
+    domainname: hive-net
     environment:
       TZ: ${TZ:-Asia/Shanghai}
       HADOOP_ROLE: namenode
@@ -70,6 +103,11 @@ services:
       - "127.0.0.1:19000:9000"  # HDFS RPC (remapped to avoid host conflict)
     volumes:
       - namenode-data:/data/namenode
+      - keytabs:/etc/security/keytabs:ro
+      - ./kdc/krb5.conf:/etc/krb5.conf:ro
+    depends_on:
+      kdc:
+        condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "nc -z localhost 9000"]
       interval: 10s
@@ -91,6 +129,7 @@ services:
     image: hadoop-base:${HADOOP_VERSION:-3.3.6}
     container_name: datanode
     hostname: datanode
+    domainname: hive-net
     environment:
       TZ: ${TZ:-Asia/Shanghai}
       HADOOP_ROLE: datanode
@@ -98,7 +137,11 @@ services:
       - "127.0.0.1:9864:9864"   # Web UI
     volumes:
       - datanode-data:/data/datanode
+      - keytabs:/etc/security/keytabs:ro
+      - ./kdc/krb5.conf:/etc/krb5.conf:ro
     depends_on:
+      kdc:
+        condition: service_healthy
       namenode:
         condition: service_healthy
     healthcheck:
@@ -126,6 +169,7 @@ services:
     image: hive-metastore:${HIVE_VERSION:-3.1.3}
     container_name: hive-metastore
     hostname: hive-metastore
+    domainname: hive-net
     environment:
       TZ: ${TZ:-Asia/Shanghai}
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rootpass2024}
@@ -134,7 +178,12 @@ services:
       MYSQL_PASSWORD: ${MYSQL_PASSWORD:-hive2024}
     ports:
       - "127.0.0.1:9083:9083"   # Thrift Metastore
+    volumes:
+      - keytabs:/etc/security/keytabs:ro
+      - ./kdc/krb5.conf:/etc/krb5.conf:ro
     depends_on:
+      kdc:
+        condition: service_healthy
       mysql:
         condition: service_healthy
       namenode:
@@ -166,6 +215,7 @@ services:
     image: spark:${SPARK_VERSION:-3.5.3}
     container_name: spark-master
     hostname: spark-master
+    domainname: hive-net
     environment:
       TZ: ${TZ:-Asia/Shanghai}
       SPARK_ROLE: master
@@ -173,7 +223,12 @@ services:
       - "127.0.0.1:18080:8080"  # Spark Master Web UI
       - "127.0.0.1:10000:10000" # Thrift Server (JDBC)
       - "127.0.0.1:4040:4040"   # Spark Application UI
+    volumes:
+      - keytabs:/etc/security/keytabs:ro
+      - ./kdc/krb5.conf:/etc/krb5.conf:ro
     depends_on:
+      kdc:
+        condition: service_healthy
       hive-metastore:
         condition: service_healthy
     healthcheck:
@@ -197,10 +252,16 @@ services:
     image: spark:${SPARK_VERSION:-3.5.3}
     container_name: spark-worker
     hostname: spark-worker
+    domainname: hive-net
     environment:
       TZ: ${TZ:-Asia/Shanghai}
       SPARK_ROLE: worker
+    volumes:
+      - keytabs:/etc/security/keytabs:ro
+      - ./kdc/krb5.conf:/etc/krb5.conf:ro
     depends_on:
+      kdc:
+        condition: service_healthy
       spark-master:
         condition: service_started
     healthcheck:
@@ -226,6 +287,8 @@ volumes:
   namenode-data:
     driver: local
   datanode-data:
+    driver: local
+  keytabs:
     driver: local
 
 # ============================================================

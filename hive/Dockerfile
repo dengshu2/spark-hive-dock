@@ -21,9 +21,10 @@ ENV HIVE_HOME=/opt/hive
 ENV HIVE_CONF_DIR=${HIVE_HOME}/conf
 ENV PATH=${HIVE_HOME}/bin:${PATH}
 
-# Install mysql client for health checks
+# Install mysql client for health checks + Kerberos client
 RUN apt-get update && apt-get install -y --no-install-recommends \
     default-mysql-client \
+    krb5-user \
     && rm -rf /var/lib/apt/lists/*
 
 # Download and install Hive (cached across rebuilds)

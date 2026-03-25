@@ -4,11 +4,12 @@
 # - JDK 11 (Spark 3.5 requirement)
 # - Hadoop client configs for HDFS access
 # - Hive Metastore integration via Spark SQL
+# - Kerberos client for authenticated access
 # - Uses BuildKit cache for download layer (avoids re-download)
 # ============================================================
 FROM eclipse-temurin:11-jre-jammy
 
-LABEL description="Spark 3.5.3 with Hive Metastore support"
+LABEL description="Spark 3.5.3 with Hive Metastore + Kerberos support"
 
 ARG SPARK_VERSION=3.5.3
 ARG MYSQL_CONNECTOR_VERSION=8.0.28
@@ -20,9 +21,9 @@ ENV SPARK_HOME=/opt/spark
 ENV HADOOP_CONF_DIR=/opt/spark/conf/hadoop
 ENV PATH=${SPARK_HOME}/bin:${SPARK_HOME}/sbin:${PATH}
 
-# Install utilities
+# Install utilities (includes Kerberos client)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl netcat procps tini \
+    curl netcat krb5-user procps tini \
     && rm -rf /var/lib/apt/lists/*
 
 # Download and install Spark (cached across rebuilds)
@@ -43,6 +44,7 @@ RUN --mount=type=cache,target=/tmp/downloads \
 # Hadoop configuration (HDFS access)
 RUN mkdir -p ${HADOOP_CONF_DIR}
 COPY core-site.xml ${HADOOP_CONF_DIR}/core-site.xml
+COPY hdfs-site.xml ${HADOOP_CONF_DIR}/hdfs-site.xml
 
 # Spark configuration
 COPY spark-defaults.conf ${SPARK_HOME}/conf/spark-defaults.conf

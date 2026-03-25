@@ -2,6 +2,7 @@
 # ============================================================
 # Hadoop Entrypoint Script
 # Routes to the correct startup based on HADOOP_ROLE env var
+# Includes Kerberos initialization (kinit) before service start
 # ============================================================
 set -e
 
@@ -29,11 +30,40 @@ wait_for_port() {
 }
 
 # -------------------------------------------------------
+# Wait for KDC to be ready (keytab volume populated)
+# -------------------------------------------------------
+wait_for_kdc() {
+    local ready_file="/etc/security/keytabs/.kdc-ready"
+    local max_retries=60
+    local retry=0
+
+    echo "[entrypoint] Waiting for KDC to be ready ..."
+    while [ ! -f "$ready_file" ]; do
+        retry=$((retry + 1))
+        if [ "$retry" -ge "$max_retries" ]; then
+            echo "[entrypoint] ERROR: KDC not ready after ${max_retries} retries"
+            exit 1
+        fi
+        echo "[entrypoint]   KDC attempt ${retry}/${max_retries} ..."
+        sleep 2
+    done
+    echo "[entrypoint] KDC is ready"
+}
+
+# -------------------------------------------------------
 # Main routing
 # -------------------------------------------------------
 case "${HADOOP_ROLE}" in
     namenode)
         echo "[entrypoint] Starting as NameNode ..."
+
+        # Wait for KDC and obtain Kerberos ticket
+        wait_for_kdc
+        FQDN=$(hostname -f)
+        echo "[entrypoint] FQDN = ${FQDN} (hostname = $(hostname))"
+        echo "[entrypoint] Obtaining Kerberos ticket for hdfs/${FQDN} ..."
+        kinit -kt /etc/security/keytabs/hdfs.keytab hdfs/${FQDN}@EXAMPLE.COM
+        klist
 
         # Format namenode if not already formatted
         if [ ! -f /data/namenode/current/VERSION ]; then
@@ -49,6 +79,14 @@ case "${HADOOP_ROLE}" in
 
     datanode)
         echo "[entrypoint] Starting as DataNode ..."
+
+        # Wait for KDC and obtain Kerberos ticket
+        wait_for_kdc
+        FQDN=$(hostname -f)
+        echo "[entrypoint] FQDN = ${FQDN} (hostname = $(hostname))"
+        echo "[entrypoint] Obtaining Kerberos ticket for hdfs/${FQDN} ..."
+        kinit -kt /etc/security/keytabs/hdfs.keytab hdfs/${FQDN}@EXAMPLE.COM
+        klist
 
         # Wait for NameNode to be available
         wait_for_port namenode 9000 60

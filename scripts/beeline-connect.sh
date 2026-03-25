@@ -1,8 +1,7 @@
 #!/bin/bash
 # ============================================================
-# Connect to Spark Thrift Server via Beeline
+# Beeline Connect Script (Kerberos)
+# Connects to Spark Thrift Server with Kerberos authentication
 # ============================================================
-echo "Connecting to Spark Thrift Server ..."
-echo "  JDBC URL: jdbc:hive2://localhost:10000"
-echo ""
-docker exec -it spark-master beeline -u "jdbc:hive2://localhost:10000" -n root
+docker exec -it spark-master /opt/spark/bin/beeline \
+    -u "jdbc:hive2://spark-master.hive-net:10000/;principal=spark/spark-master.hive-net@EXAMPLE.COM"
