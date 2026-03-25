@@ -2,7 +2,7 @@
 
 English | [中文](README_CN.md)
 
-Dockerized Spark SQL cluster with Hive Metastore on Hadoop HDFS. MySQL serves as the Metastore backend. Designed for development and testing — **not for production use**.
+Dockerized Spark SQL cluster with Hive Metastore on Hadoop HDFS, secured with **MIT Kerberos** authentication. MySQL serves as the Metastore backend. Designed for development and testing — **not for production use**.
 
 ## Version Matrix
 
@@ -12,35 +12,42 @@ Dockerized Spark SQL cluster with Hive Metastore on Hadoop HDFS. MySQL serves as
 | Hive Metastore | 3.1.3 | OpenJDK 8 (Temurin) |
 | Spark | 3.5.3 | OpenJDK 11 (Temurin) |
 | MySQL | 8.0 | — |
+| MIT Kerberos (KDC) | Debian bookworm | — |
 
 ## Architecture
 
 ```
-                     ┌──────────────────────────────────┐
-                     │     Docker Network: hive-net      │
-                     │                                  │
-  ┌───────┐          │  ┌──────────┐   ┌──────────┐    │
-  │ MySQL │◄─────────┤  │ NameNode │   │ DataNode │    │
-  │ :3306 │          │  │  :9870   │   │  :9864   │    │
-  └───────┘          │  └────┬─────┘   └─────┬────┘    │
-                     │       │               │         │
-                     │  ┌────┴───────────────┴────┐    │
-                     │  │    Hive Metastore        │    │
-                     │  │       :9083              │    │
-                     │  └────────────┬─────────────┘    │
-                     │               │                  │
-  ┌──────────────┐   │  ┌────────────▼─────────────┐   │
-  │   Beeline    │──►│  │  Spark Master             │   │
-  │  (client)    │   │  │  :7077 (RPC)              │   │
-  └──────────────┘   │  │  :10000 (Thrift / JDBC)   │   │
-                     │  │  :18080 (Web UI)          │   │
-                     │  └────────────┬─────────────┘   │
-                     │               │                  │
-                     │  ┌────────────▼─────────────┐   │
-                     │  │    Spark Worker           │   │
-                     │  └──────────────────────────┘   │
-                     └──────────────────────────────────┘
+                     ┌──────────────────────────────────────┐
+                     │       Docker Network: hive-net        │
+                     │  ┌─────────┐                         │
+                     │  │   KDC   │  ← MIT Kerberos         │
+                     │  │   :88   │    (principals + keytabs)│
+                     │  └────┬────┘                         │
+                     │       │ GSSAPI / keytab               │
+  ┌───────┐          │  ┌────▼─────┐   ┌──────────┐        │
+  │ MySQL │◄─────────┤  │ NameNode │   │ DataNode │        │
+  │ :3306 │          │  │  :9870   │   │  :9864   │        │
+  └───────┘          │  └────┬─────┘   └─────┬────┘        │
+                     │       │  HDFS (Kerberos RPC)          │
+                     │  ┌────┴───────────────┴────┐        │
+                     │  │    Hive Metastore        │        │
+                     │  │    :9083 (SASL/GSSAPI)   │        │
+                     │  └────────────┬─────────────┘        │
+                     │               │                      │
+  ┌──────────────┐   │  ┌────────────▼─────────────┐       │
+  │   Beeline    │──►│  │  Spark Master             │       │
+  │  (GSSAPI)    │   │  │  :7077 (RPC)              │       │
+  └──────────────┘   │  │  :10000 (Thrift / JDBC)   │       │
+                     │  │  :18080 (Web UI)          │       │
+                     │  └────────────┬─────────────┘       │
+                     │               │                      │
+                     │  ┌────────────▼─────────────┐       │
+                     │  │    Spark Worker           │       │
+                     │  └──────────────────────────┘       │
+                     └──────────────────────────────────────┘
 ```
+
+**Authentication flow**: KDC provisions principals and keytabs → all services authenticate via GSSAPI/SASL
 
 **Data flow**: Beeline → Spark Thrift Server (JDBC :10000) → Hive Metastore (schema) → HDFS (data storage)
 
@@ -57,13 +64,16 @@ make up
 # 3. Check service status
 make status
 
-# 4. Connect via Beeline
+# 4. Verify Kerberos tickets
+make kinit
+
+# 5. Connect via Beeline (Kerberos GSSAPI)
 bash scripts/beeline-connect.sh
 
-# 5. (Optional) Load test data
+# 6. (Optional) Load test data
 bash scripts/init-test-data.sh
 
-# 6. Run smoke test
+# 7. Run smoke test
 make test
 ```
 
@@ -71,16 +81,46 @@ make test
 
 | Command | Description |
 |---------|-------------|
-| `make build` | Build all images in correct dependency order (hadoop-base → hive + spark) |
+| `make build` | Build all images in correct dependency order (kdc → hadoop-base → hive + spark) |
 | `make up` | Build + start all services |
 | `make down` | Stop and remove containers |
 | `make clean` | Stop and remove containers, volumes, and local images |
-| `make test` | Run smoke test (CREATE → INSERT → SELECT → DROP) |
+| `make test` | Run smoke test (CREATE → INSERT → SELECT → DROP) via Kerberos |
+| `make kinit` | Verify Kerberos tickets on all services |
 | `make status` | Show service health status |
 | `make logs` | Follow all service logs |
 | `make restart` | Restart all services |
 
 > Why a Makefile? The `hive-metastore` image depends on `hadoop-base` (`FROM hadoop-base:3.3.6`), but `docker compose build` doesn't guarantee build ordering. The Makefile ensures hadoop-base is built before hive-metastore.
+
+## Kerberos Configuration
+
+The cluster uses MIT Kerberos for authentication across all services. The KDC container automatically:
+
+1. Creates the Kerberos realm database
+2. Provisions service principals for HDFS, Hive, and Spark (both short hostnames and Docker FQDNs with `.hive-net` suffix)
+3. Exports keytabs to a shared Docker volume
+4. Signals readiness via a marker file
+
+### Service Principals
+
+| Service | Principal Pattern |
+|---------|-------------------|
+| HDFS NameNode | `hdfs/namenode.hive-net@EXAMPLE.COM` |
+| HDFS DataNode | `hdfs/datanode.hive-net@EXAMPLE.COM` |
+| Hive MetaStore | `hive/hive-metastore.hive-net@EXAMPLE.COM` |
+| Spark Master | `spark/spark-master.hive-net@EXAMPLE.COM` |
+| Spark Worker | `spark/spark-worker.hive-net@EXAMPLE.COM` |
+| HTTP (SPNEGO) | `HTTP/<service>.hive-net@EXAMPLE.COM` |
+
+> All services use Docker FQDN (`.hive-net` suffix) for consistent Kerberos `_HOST` principal expansion. The `docker-compose.yml` sets `domainname: hive-net` on every service.
+
+### Kerberos Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `KRB5_REALM` | Kerberos realm name | `EXAMPLE.COM` |
+| `KRB5_KDC_PASSWORD` | KDC database master password | — |
 
 ## Web UIs
 
@@ -96,29 +136,34 @@ make test
 ```
 spark-hive-dock/
 ├── Makefile                  # Build, start, and test entry point
-├── docker-compose.yml        # Service orchestration (6 containers)
+├── docker-compose.yml        # Service orchestration (7 containers)
 ├── .env.example              # Environment template
 ├── .dockerignore             # Build context exclusions
+├── kdc/
+│   ├── Dockerfile            # MIT Kerberos KDC image
+│   ├── krb5.conf             # Kerberos client configuration
+│   └── init-kdc.sh           # Principal provisioning + keytab export
 ├── hadoop/
-│   ├── Dockerfile            # Hadoop 3.3.6 + JDK 8 base image
-│   ├── core-site.xml         # HDFS default filesystem
-│   ├── hdfs-site.xml         # HDFS replication & storage
-│   └── entrypoint.sh         # Multi-role startup (namenode / datanode)
+│   ├── Dockerfile            # Hadoop 3.3.6 + JDK 8 + krb5-user
+│   ├── core-site.xml         # HDFS + Kerberos authentication
+│   ├── hdfs-site.xml         # HDFS replication, storage, Kerberos principals
+│   └── entrypoint.sh         # Multi-role startup with kinit
 ├── hive/
-│   ├── Dockerfile            # Hive 3.1.3 Metastore image
-│   ├── hive-site.xml         # Metastore connection (templated)
-│   └── entrypoint-metastore.sh
+│   ├── Dockerfile            # Hive 3.1.3 Metastore + krb5-user
+│   ├── hive-site.xml         # Metastore SASL/GSSAPI authentication
+│   └── entrypoint-metastore.sh  # Kerberized startup sequence
 ├── spark/
-│   ├── Dockerfile            # Spark 3.5.3 + Thrift Server
-│   ├── core-site.xml         # HDFS connection
-│   ├── hive-site.xml         # Metastore client config
-│   ├── spark-defaults.conf   # Spark defaults
-│   └── entrypoint.sh         # Master / Worker role switch
+│   ├── Dockerfile            # Spark 3.5.3 + Thrift Server + krb5-user
+│   ├── core-site.xml         # HDFS + Kerberos + proxy user config
+│   ├── hdfs-site.xml         # HDFS Kerberos principals (synced from hadoop/)
+│   ├── hive-site.xml         # MetaStore SASL client config
+│   ├── spark-defaults.conf   # Kerberos principal/keytab defaults
+│   └── entrypoint.sh         # Master / Worker with kinit + --principal
 ├── mysql/
 │   └── init.sql              # Metastore DB charset config
 └── scripts/
-    ├── beeline-connect.sh    # Quick Beeline connection
-    └── init-test-data.sh     # Sample database + table
+    ├── beeline-connect.sh    # Quick Beeline connection (Kerberos)
+    └── init-test-data.sh     # Sample database + table (Kerberized)
 ```
 
 ## Environment Variables
@@ -136,6 +181,9 @@ All configurable via `.env`. Secrets are injected at runtime — no credentials 
 | `MYSQL_USER` | Metastore database user | mysql, hive |
 | `MYSQL_PASSWORD` | Metastore database password | mysql, hive |
 | `HDFS_REPLICATION` | HDFS replication factor | hadoop |
+| `KRB5_REALM` | Kerberos realm | kdc, hadoop, hive, spark |
+| `KRB5_KDC_PASSWORD` | KDC database master password | kdc |
+| `TZ` | Timezone for all containers | all |
 
 ## Known Issues & Solutions
 
@@ -150,8 +198,11 @@ All configurable via `.env`. Secrets are injected at runtime — no credentials 
 | Build dependency order | Makefile ensures hadoop-base is built before hive-metastore |
 | First-run failure residue | Run `make clean` to clear volumes before retrying |
 | Filesystem closed IOException | `fs.hdfs.impl.disable.cache=true` in `core-site.xml` prevents shared DFSClient closure |
+| Docker DNS `_HOST` mismatch | All service URIs use FQDN (`.hive-net`); `domainname: hive-net` set in compose |
+| SASL fallback to DIGEST-MD5 | `hive.server2.enable.doAs=false` keeps Spark's Kerberos Subject on MetaStore calls |
+| Thrift Server in local mode | Executor Kerberos delegation WIP; Thrift Server runs `local[*]` as interim workaround |
 
-> **Note**: `spark/core-site.xml` is a copy of `hadoop/core-site.xml`. If you modify HDFS settings, update both files.
+> **Note**: `spark/core-site.xml` and `spark/hdfs-site.xml` are copies of their `hadoop/` counterparts. If you modify HDFS settings, update both locations.
 
 ## Lifecycle
 
@@ -170,16 +221,21 @@ make restart
 
 # View logs
 make logs
+
+# Verify Kerberos
+make kinit
 ```
 
 ## ⚠️ Development Use Only
 
 This deployment is intended for local development and testing:
 
-- HDFS permissions are disabled (`dfs.permissions.enabled=false`)
-- All services run as root
-- Proxy user restrictions are fully open
-- Resource limits are set for single-machine use
+- All services run as root inside containers
+- Kerberos realm uses a test domain (`EXAMPLE.COM`)
+- `ignore.secure.ports.for.testing=true` allows unprivileged HDFS ports
+- `hive.server2.enable.doAs=false` — no per-user impersonation
+- Proxy user restrictions are fully open (`hadoop.proxyuser.*.hosts=*`)
+- Spark Thrift Server uses `local[*]` mode (distributed Executor Kerberos delegation is WIP)
 
 Do **not** use this configuration in production.
 
