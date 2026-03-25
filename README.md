@@ -2,7 +2,7 @@
 
 English | [中文](README_CN.md)
 
-Dockerized Spark SQL cluster with Hive Metastore on Hadoop HDFS, secured with **MIT Kerberos** authentication. MySQL serves as the Metastore backend. Designed for development and testing — **not for production use**.
+Dockerized Spark SQL cluster with Hive Metastore on Hadoop HDFS, secured with **MIT Kerberos** authentication and **YARN** resource management with delegation token distribution. MySQL serves as the Metastore backend. Designed for development and testing — **not for production use**.
 
 ## Version Matrix
 
@@ -87,6 +87,7 @@ make test
 | `make clean` | Stop and remove containers, volumes, and local images |
 | `make test` | Run smoke test (CREATE → INSERT → SELECT → DROP) via Kerberos |
 | `make kinit` | Verify Kerberos tickets on all services |
+| `make yarn-status` | Show YARN cluster status and application list |
 | `make status` | Show service health status |
 | `make logs` | Follow all service logs |
 | `make restart` | Restart all services |
@@ -98,7 +99,7 @@ make test
 The cluster uses MIT Kerberos for authentication across all services. The KDC container automatically:
 
 1. Creates the Kerberos realm database
-2. Provisions service principals for HDFS, Hive, and Spark (both short hostnames and Docker FQDNs with `.hive-net` suffix)
+2. Provisions service principals for HDFS, Hive, Spark, and YARN (both short hostnames and Docker FQDNs with `.hive-net` suffix)
 3. Exports keytabs to a shared Docker volume
 4. Signals readiness via a marker file
 
@@ -109,8 +110,9 @@ The cluster uses MIT Kerberos for authentication across all services. The KDC co
 | HDFS NameNode | `hdfs/namenode.hive-net@EXAMPLE.COM` |
 | HDFS DataNode | `hdfs/datanode.hive-net@EXAMPLE.COM` |
 | Hive MetaStore | `hive/hive-metastore.hive-net@EXAMPLE.COM` |
-| Spark Master | `spark/spark-master.hive-net@EXAMPLE.COM` |
-| Spark Worker | `spark/spark-worker.hive-net@EXAMPLE.COM` |
+| YARN RM (namenode) | `yarn/namenode.hive-net@EXAMPLE.COM` |
+| YARN NM (datanode) | `yarn/datanode.hive-net@EXAMPLE.COM` |
+| Spark Thrift | `spark/spark-thrift.hive-net@EXAMPLE.COM` |
 | HTTP (SPNEGO) | `HTTP/<service>.hive-net@EXAMPLE.COM` |
 
 > All services use Docker FQDN (`.hive-net` suffix) for consistent Kerberos `_HOST` principal expansion. The `docker-compose.yml` sets `domainname: hive-net` on every service.
@@ -128,7 +130,8 @@ The cluster uses MIT Kerberos for authentication across all services. The KDC co
 |---------|-----|
 | HDFS NameNode | http://localhost:9870 |
 | HDFS DataNode | http://localhost:9864 |
-| Spark Master | http://localhost:18080 |
+| YARN ResourceManager | http://localhost:8088 |
+| YARN NodeManager | http://localhost:8042 |
 | Spark Application | http://localhost:4040 |
 
 ## Project Structure
@@ -136,7 +139,7 @@ The cluster uses MIT Kerberos for authentication across all services. The KDC co
 ```
 spark-hive-dock/
 ├── Makefile                  # Build, start, and test entry point
-├── docker-compose.yml        # Service orchestration (7 containers)
+├── docker-compose.yml        # Service orchestration (6 containers)
 ├── .env.example              # Environment template
 ├── .dockerignore             # Build context exclusions
 ├── kdc/
@@ -144,10 +147,12 @@ spark-hive-dock/
 │   ├── krb5.conf             # Kerberos client configuration
 │   └── init-kdc.sh           # Principal provisioning + keytab export
 ├── hadoop/
-│   ├── Dockerfile            # Hadoop 3.3.6 + JDK 8 + krb5-user
+│   ├── Dockerfile            # Hadoop 3.3.6 + YARN + Spark Shuffle + Kerberos
 │   ├── core-site.xml         # HDFS + Kerberos authentication
 │   ├── hdfs-site.xml         # HDFS replication, storage, Kerberos principals
-│   └── entrypoint.sh         # Multi-role startup with kinit
+│   ├── yarn-site.xml         # YARN resource management + Kerberos
+│   ├── mapred-site.xml       # MapReduce framework config
+│   └── entrypoint.sh         # Multi-role startup (NN+RM / DN+NM) with kinit
 ├── hive/
 │   ├── Dockerfile            # Hive 3.1.3 Metastore + krb5-user
 │   ├── hive-site.xml         # Metastore SASL/GSSAPI authentication
@@ -156,9 +161,11 @@ spark-hive-dock/
 │   ├── Dockerfile            # Spark 3.5.3 + Thrift Server + krb5-user
 │   ├── core-site.xml         # HDFS + Kerberos + proxy user config
 │   ├── hdfs-site.xml         # HDFS Kerberos principals (synced from hadoop/)
+│   ├── yarn-site.xml         # YARN client config (synced from hadoop/)
+│   ├── mapred-site.xml       # MapReduce config (synced from hadoop/)
 │   ├── hive-site.xml         # MetaStore SASL client config
-│   ├── spark-defaults.conf   # Kerberos principal/keytab defaults
-│   └── entrypoint.sh         # Master / Worker with kinit + --principal
+│   ├── spark-defaults.conf   # YARN mode + Kerberos delegation token
+│   └── entrypoint.sh         # Thrift Server (YARN client) + kinit
 ├── mysql/
 │   └── init.sql              # Metastore DB charset config
 └── scripts/
@@ -200,9 +207,9 @@ All configurable via `.env`. Secrets are injected at runtime — no credentials 
 | Filesystem closed IOException | `fs.hdfs.impl.disable.cache=true` in `core-site.xml` prevents shared DFSClient closure |
 | Docker DNS `_HOST` mismatch | All service URIs use FQDN (`.hive-net`); `domainname: hive-net` set in compose |
 | SASL fallback to DIGEST-MD5 | `hive.server2.enable.doAs=false` keeps Spark's Kerberos Subject on MetaStore calls |
-| Thrift Server in local mode | Executor Kerberos delegation WIP; Thrift Server runs `local[*]` as interim workaround |
+| Executor Kerberos auth | Solved via YARN mode — YARN auto-distributes delegation tokens to Executors |
 
-> **Note**: `spark/core-site.xml` and `spark/hdfs-site.xml` are copies of their `hadoop/` counterparts. If you modify HDFS settings, update both locations.
+> **Note**: `spark/` directory contains copies of `core-site.xml`, `hdfs-site.xml`, `yarn-site.xml`, and `mapred-site.xml` from `hadoop/`. If you modify Hadoop config, update both locations.
 
 ## Lifecycle
 
@@ -235,7 +242,7 @@ This deployment is intended for local development and testing:
 - `ignore.secure.ports.for.testing=true` allows unprivileged HDFS ports
 - `hive.server2.enable.doAs=false` — no per-user impersonation
 - Proxy user restrictions are fully open (`hadoop.proxyuser.*.hosts=*`)
-- Spark Thrift Server uses `local[*]` mode (distributed Executor Kerberos delegation is WIP)
+- Spark Thrift Server runs in YARN client mode with Executors managed by NodeManager
 
 Do **not** use this configuration in production.
 

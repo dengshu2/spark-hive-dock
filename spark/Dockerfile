@@ -2,14 +2,14 @@
 # ============================================================
 # Spark 3.5.3 Image
 # - JDK 11 (Spark 3.5 requirement)
-# - Hadoop client configs for HDFS access
+# - Hadoop + YARN client configs for HDFS/YARN access
 # - Hive Metastore integration via Spark SQL
 # - Kerberos client for authenticated access
 # - Uses BuildKit cache for download layer (avoids re-download)
 # ============================================================
 FROM eclipse-temurin:11-jre-jammy
 
-LABEL description="Spark 3.5.3 with Hive Metastore + Kerberos support"
+LABEL description="Spark 3.5.3 Thrift Server with YARN + Kerberos"
 
 ARG SPARK_VERSION=3.5.3
 ARG MYSQL_CONNECTOR_VERSION=8.0.28
@@ -19,11 +19,12 @@ ARG MYSQL_CONNECTOR_URL=https://repo1.maven.org/maven2/mysql/mysql-connector-jav
 ENV SPARK_VERSION=${SPARK_VERSION}
 ENV SPARK_HOME=/opt/spark
 ENV HADOOP_CONF_DIR=/opt/spark/conf/hadoop
+ENV YARN_CONF_DIR=/opt/spark/conf/hadoop
 ENV PATH=${SPARK_HOME}/bin:${SPARK_HOME}/sbin:${PATH}
 
 # Install utilities (includes Kerberos client)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl netcat krb5-user procps tini \
+    curl netcat-openbsd krb5-user procps tini \
     && rm -rf /var/lib/apt/lists/*
 
 # Download and install Spark (cached across rebuilds)
@@ -41,10 +42,12 @@ RUN --mount=type=cache,target=/tmp/downloads \
     fi \
     && cp /tmp/downloads/mysql-connector-java-${MYSQL_CONNECTOR_VERSION}.jar ${SPARK_HOME}/jars/
 
-# Hadoop configuration (HDFS access)
+# Hadoop + YARN configuration (HDFS and YARN access)
 RUN mkdir -p ${HADOOP_CONF_DIR}
 COPY core-site.xml ${HADOOP_CONF_DIR}/core-site.xml
 COPY hdfs-site.xml ${HADOOP_CONF_DIR}/hdfs-site.xml
+COPY yarn-site.xml ${HADOOP_CONF_DIR}/yarn-site.xml
+COPY mapred-site.xml ${HADOOP_CONF_DIR}/mapred-site.xml
 
 # Spark configuration
 COPY spark-defaults.conf ${SPARK_HOME}/conf/spark-defaults.conf

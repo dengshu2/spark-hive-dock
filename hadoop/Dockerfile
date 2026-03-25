@@ -2,12 +2,13 @@
 # ============================================================
 # Hadoop Base Image
 # Based on Eclipse Temurin JDK 8 (production-grade OpenJDK)
+# Supports: NameNode + ResourceManager, DataNode + NodeManager
 # Uses BuildKit cache for download layer (avoids re-download)
 # ============================================================
 FROM eclipse-temurin:8-jdk AS hadoop-base
 
 LABEL maintainer="hive-docker"
-LABEL description="Hadoop 3.3.6 base image with OpenJDK 8 + Kerberos"
+LABEL description="Hadoop 3.3.6 base image with YARN + Kerberos"
 
 # Build arguments
 ARG HADOOP_VERSION=3.3.6
@@ -22,9 +23,15 @@ ENV JAVA_HOME=/opt/java/openjdk
 ENV HDFS_NAMENODE_USER=root
 ENV HDFS_DATANODE_USER=root
 ENV HDFS_SECONDARYNAMENODE_USER=root
+ENV YARN_RESOURCEMANAGER_USER=root
+ENV YARN_NODEMANAGER_USER=root
 # NOTE: HDFS_DATANODE_SECURE_USER is intentionally NOT set.
 # With dfs.data.transfer.protection=authentication (SASL), the DataNode
 # uses unprivileged ports and does not need the secure user mechanism.
+# NOTE: Spark External Shuffle Service (yarn.nodemanager.aux-services=spark_shuffle)
+# is intentionally not configured. This cluster uses fixed executor count
+# (spark.executor.instances=1) with no dynamic allocation, so the external
+# shuffle service is not required.
 
 # Install dependencies (includes Kerberos client)
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -49,6 +56,8 @@ RUN mkdir -p /data/namenode /data/datanode
 # Copy configuration files
 COPY core-site.xml ${HADOOP_CONF_DIR}/core-site.xml
 COPY hdfs-site.xml ${HADOOP_CONF_DIR}/hdfs-site.xml
+COPY yarn-site.xml ${HADOOP_CONF_DIR}/yarn-site.xml
+COPY mapred-site.xml ${HADOOP_CONF_DIR}/mapred-site.xml
 
 # Copy entrypoint
 COPY entrypoint.sh /entrypoint.sh

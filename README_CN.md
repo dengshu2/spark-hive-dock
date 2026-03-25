@@ -2,7 +2,7 @@
 
 [English](README.md) | 中文
 
-基于 Docker 的 Spark SQL 集群，集成 Hive Metastore 和 Hadoop HDFS，使用 **MIT Kerberos** 实现安全认证。MySQL 作为 Metastore 后端存储。面向开发和测试环境 — **请勿用于生产**。
+基于 Docker 的 Spark SQL 集群，集成 Hive Metastore 和 Hadoop HDFS，使用 **MIT Kerberos** 实现安全认证，**YARN** 提供资源管理和 Delegation Token 分发。MySQL 作为 Metastore 后端存储。面向开发和测试环境 — **请勿用于生产**。
 
 ## 版本矩阵
 
@@ -87,6 +87,7 @@ make test
 | `make clean` | 停止并移除容器、卷和本地镜像 |
 | `make test` | 通过 Kerberos 运行冒烟测试 (CREATE → INSERT → SELECT → DROP) |
 | `make kinit` | 验证所有服务的 Kerberos 票据 |
+| `make yarn-status` | 查看 YARN 集群状态和应用列表 |
 | `make status` | 查看服务健康状态 |
 | `make logs` | 跟踪所有服务日志 |
 | `make restart` | 重启所有服务 |
@@ -98,7 +99,7 @@ make test
 集群使用 MIT Kerberos 实现跨服务认证。KDC 容器自动完成：
 
 1. 创建 Kerberos realm 数据库
-2. 为 HDFS、Hive、Spark 创建服务 principals（同时包含短主机名和 Docker FQDN `.hive-net` 后缀）
+2. 为 HDFS、Hive、Spark、YARN 创建服务 principals（同时包含短主机名和 Docker FQDN `.hive-net` 后缀）
 3. 导出 keytabs 到共享 Docker 卷
 4. 通过标记文件通知依赖服务 KDC 已就绪
 
@@ -109,8 +110,9 @@ make test
 | HDFS NameNode | `hdfs/namenode.hive-net@EXAMPLE.COM` |
 | HDFS DataNode | `hdfs/datanode.hive-net@EXAMPLE.COM` |
 | Hive MetaStore | `hive/hive-metastore.hive-net@EXAMPLE.COM` |
-| Spark Master | `spark/spark-master.hive-net@EXAMPLE.COM` |
-| Spark Worker | `spark/spark-worker.hive-net@EXAMPLE.COM` |
+| YARN RM (namenode) | `yarn/namenode.hive-net@EXAMPLE.COM` |
+| YARN NM (datanode) | `yarn/datanode.hive-net@EXAMPLE.COM` |
+| Spark Thrift | `spark/spark-thrift.hive-net@EXAMPLE.COM` |
 | HTTP (SPNEGO) | `HTTP/<service>.hive-net@EXAMPLE.COM` |
 
 > 所有服务使用 Docker FQDN（`.hive-net` 后缀）以实现 Kerberos `_HOST` principal 展开的一致性。`docker-compose.yml` 为每个服务设置了 `domainname: hive-net`。
@@ -128,7 +130,8 @@ make test
 |------|------|
 | HDFS NameNode | http://localhost:9870 |
 | HDFS DataNode | http://localhost:9864 |
-| Spark Master | http://localhost:18080 |
+| YARN ResourceManager | http://localhost:8088 |
+| YARN NodeManager | http://localhost:8042 |
 | Spark Application | http://localhost:4040 |
 
 ## 项目结构
@@ -136,7 +139,7 @@ make test
 ```
 spark-hive-dock/
 ├── Makefile                  # 构建、启动、测试的统一入口
-├── docker-compose.yml        # 服务编排 (7 个容器)
+├── docker-compose.yml        # 服务编排 (6 个容器)
 ├── .env.example              # 环境变量模板
 ├── .dockerignore             # 构建上下文排除规则
 ├── kdc/
@@ -144,10 +147,12 @@ spark-hive-dock/
 │   ├── krb5.conf             # Kerberos 客户端配置
 │   └── init-kdc.sh           # Principal 创建 + keytab 导出
 ├── hadoop/
-│   ├── Dockerfile            # Hadoop 3.3.6 + JDK 8 + krb5-user
+│   ├── Dockerfile            # Hadoop 3.3.6 + YARN + Spark Shuffle + Kerberos
 │   ├── core-site.xml         # HDFS + Kerberos 认证
 │   ├── hdfs-site.xml         # HDFS 副本数、存储、Kerberos principals
-│   └── entrypoint.sh         # 多角色启动 + kinit
+│   ├── yarn-site.xml         # YARN 资源管理 + Kerberos
+│   ├── mapred-site.xml       # MapReduce 框架配置
+│   └── entrypoint.sh         # 多角色启动 (NN+RM / DN+NM) + kinit
 ├── hive/
 │   ├── Dockerfile            # Hive 3.1.3 Metastore + krb5-user
 │   ├── hive-site.xml         # Metastore SASL/GSSAPI 认证
@@ -156,9 +161,11 @@ spark-hive-dock/
 │   ├── Dockerfile            # Spark 3.5.3 + Thrift Server + krb5-user
 │   ├── core-site.xml         # HDFS + Kerberos + 代理用户配置
 │   ├── hdfs-site.xml         # HDFS Kerberos principals (与 hadoop/ 同步)
+│   ├── yarn-site.xml         # YARN 客户端配置 (与 hadoop/ 同步)
+│   ├── mapred-site.xml       # MapReduce 配置 (与 hadoop/ 同步)
 │   ├── hive-site.xml         # MetaStore SASL 客户端配置
-│   ├── spark-defaults.conf   # Kerberos principal/keytab 默认参数
-│   └── entrypoint.sh         # Master / Worker + kinit + --principal
+│   ├── spark-defaults.conf   # YARN 模式 + Kerberos delegation token
+│   └── entrypoint.sh         # Thrift Server (YARN client) + kinit
 ├── mysql/
 │   └── init.sql              # Metastore 数据库字符集配置
 └── scripts/
@@ -200,9 +207,9 @@ spark-hive-dock/
 | Filesystem closed 异常 | `core-site.xml` 设置 `fs.hdfs.impl.disable.cache=true`，避免共享 DFSClient 被关闭 |
 | Docker DNS `_HOST` 展开不匹配 | 所有服务 URI 使用 FQDN (`.hive-net`)；compose 中设置 `domainname: hive-net` |
 | SASL 降级到 DIGEST-MD5 | `hive.server2.enable.doAs=false` 保持 Spark 的 Kerberos Subject 连接 MetaStore |
-| Thrift Server 非分布式模式 | Executor Kerberos delegation 待实现；暂用 `local[*]` 模式运行 |
+| Executor Kerberos 认证 | 已通过 YARN 模式解决 — YARN 自动分发 Delegation Token 给 Executor |
 
-> **注意**: `spark/core-site.xml` 和 `spark/hdfs-site.xml` 是 `hadoop/` 目录下对应文件的副本。如果修改了 HDFS 配置，请同时更新两处。
+> **注意**: `spark/` 目录中的 `core-site.xml`、`hdfs-site.xml`、`yarn-site.xml`、`mapred-site.xml` 是 `hadoop/` 目录下对应文件的副本。如果修改了 Hadoop 配置，请同时更新两处。
 
 ## 生命周期
 
@@ -235,7 +242,7 @@ make kinit
 - `ignore.secure.ports.for.testing=true` 允许非特权 HDFS 端口
 - `hive.server2.enable.doAs=false` — 不进行用户级模拟
 - 代理用户限制完全开放 (`hadoop.proxyuser.*.hosts=*`)
-- Spark Thrift Server 使用 `local[*]` 模式（分布式 Executor Kerberos delegation 待实现）
+- Spark Thrift Server 使用 YARN client 模式，Executor 由 NodeManager 管理
 
 **请勿将此配置用于生产环境。**
 

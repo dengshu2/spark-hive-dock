@@ -7,8 +7,8 @@
 set -e
 
 # Kerberos-enabled JDBC URI
-JDBC_URI="jdbc:hive2://spark-master.hive-net:10000/;principal=spark/spark-master.hive-net@EXAMPLE.COM"
-BEELINE_CMD="docker exec spark-master beeline -u '${JDBC_URI}' --silent=true --outputformat=table2"
+JDBC_URI="jdbc:hive2://spark-thrift.hive-net:10000/;principal=spark/spark-thrift.hive-net@EXAMPLE.COM"
+BEELINE_CMD="docker exec spark-thrift beeline -u '${JDBC_URI}' --silent=true --outputformat=table2"
 
 echo "============================================================"
 echo " Initializing Test Data (Kerberos)"
@@ -17,13 +17,13 @@ echo ""
 
 # Step 0: Obtain Kerberos ticket inside the container
 echo "[init] Obtaining Kerberos ticket ..."
-docker exec spark-master kinit -kt /etc/security/keytabs/spark.keytab spark/spark-master.hive-net@EXAMPLE.COM
+docker exec spark-thrift kinit -kt /etc/security/keytabs/spark.keytab spark/spark-thrift.hive-net@EXAMPLE.COM
 
 # Step 1: Check Spark Thrift Server connectivity
 echo "[init] Checking Spark Thrift Server connectivity ..."
 max_retries=30
 retry=0
-while ! docker exec spark-master beeline -u "${JDBC_URI}" -e "SELECT 1;" >/dev/null 2>&1; do
+while ! docker exec spark-thrift beeline -u "${JDBC_URI}" -e "SELECT 1;" >/dev/null 2>&1; do
     retry=$((retry + 1))
     if [ "$retry" -ge "$max_retries" ]; then
         echo "[init] ERROR: Spark Thrift Server not ready after ${max_retries} attempts"
@@ -37,11 +37,11 @@ echo ""
 
 # Step 2: Create sample database
 echo "[init] Creating database 'sample_db' ..."
-docker exec spark-master beeline -u "${JDBC_URI}" --silent=true -e "CREATE DATABASE IF NOT EXISTS sample_db;"
+docker exec spark-thrift beeline -u "${JDBC_URI}" --silent=true -e "CREATE DATABASE IF NOT EXISTS sample_db;"
 
 # Step 3: Create sample table
 echo "[init] Creating table 'sample_db.employees' ..."
-docker exec spark-master beeline -u "${JDBC_URI}" --silent=true -e "
+docker exec spark-thrift beeline -u "${JDBC_URI}" --silent=true -e "
 USE sample_db;
 CREATE TABLE IF NOT EXISTS employees (
     id        INT,
@@ -55,7 +55,7 @@ STORED AS ORC;
 
 # Step 4: Insert sample data
 echo "[init] Inserting test records ..."
-docker exec spark-master beeline -u "${JDBC_URI}" --silent=true -e "
+docker exec spark-thrift beeline -u "${JDBC_URI}" --silent=true -e "
 USE sample_db;
 INSERT INTO employees VALUES
     (1, 'Takeshi Yamamoto',   'Engineering',  92500.00, '2021-03-15'),
@@ -71,7 +71,7 @@ INSERT INTO employees VALUES
 # Step 5: Verify insertion
 echo ""
 echo "[init] Verifying data ..."
-docker exec spark-master beeline -u "${JDBC_URI}" --silent=true -e "
+docker exec spark-thrift beeline -u "${JDBC_URI}" --silent=true -e "
 USE sample_db;
 SELECT COUNT(*) AS total_employees FROM employees;
 SELECT dept, COUNT(*) AS headcount, ROUND(AVG(salary), 2) AS avg_salary FROM employees GROUP BY dept ORDER BY avg_salary DESC;

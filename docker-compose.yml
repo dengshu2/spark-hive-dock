@@ -1,21 +1,22 @@
 # ============================================================
-# Docker Compose - spark-hive-dock (Kerberized)
+# Docker Compose - spark-hive-dock (Kerberized + YARN)
 #
 # Spark SQL cluster with Hive Metastore on Hadoop HDFS,
 # secured with MIT Kerberos authentication.
+# YARN provides resource management and Kerberos delegation
+# token distribution to Spark executors.
 #
 # Services:
 #   - kdc             : MIT Kerberos KDC (authentication center)
 #   - mysql           : Metastore backend (MySQL 8.0)
-#   - namenode        : HDFS NameNode
-#   - datanode        : HDFS DataNode
+#   - namenode        : HDFS NameNode + YARN ResourceManager
+#   - datanode        : HDFS DataNode + YARN NodeManager
 #   - hive-metastore  : Hive Metastore Service (metadata only)
-#   - spark-master    : Spark Master + Thrift Server (JDBC)
-#   - spark-worker    : Spark Worker
+#   - spark-thrift    : Spark Thrift Server (JDBC, YARN client)
 #
 # Usage:
 #   docker compose up -d --build
-#   docker compose logs -f spark-master
+#   docker compose logs -f spark-thrift
 #   docker compose down -v   (destroy volumes)
 # ============================================================
 
@@ -84,7 +85,7 @@ services:
     restart: unless-stopped
 
   # --------------------------------------------------------
-  # HDFS NameNode
+  # HDFS NameNode + YARN ResourceManager
   # --------------------------------------------------------
   namenode:
     build:
@@ -99,8 +100,9 @@ services:
       TZ: ${TZ:-Asia/Shanghai}
       HADOOP_ROLE: namenode
     ports:
-      - "127.0.0.1:9870:9870"   # Web UI
+      - "127.0.0.1:9870:9870"   # HDFS Web UI
       - "127.0.0.1:19000:9000"  # HDFS RPC (remapped to avoid host conflict)
+      - "127.0.0.1:8088:8088"   # YARN ResourceManager Web UI
     volumes:
       - namenode-data:/data/namenode
       - keytabs:/etc/security/keytabs:ro
@@ -109,21 +111,21 @@ services:
       kdc:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "nc -z localhost 9000"]
+      test: ["CMD-SHELL", "nc -z localhost 9000 && nc -z localhost 8032"]
       interval: 10s
       timeout: 5s
       retries: 20
-      start_period: 20s
+      start_period: 30s
     deploy:
       resources:
         limits:
-          memory: 768M
+          memory: 1536M
     networks:
       - hive-net
     restart: unless-stopped
 
   # --------------------------------------------------------
-  # HDFS DataNode
+  # HDFS DataNode + YARN NodeManager
   # --------------------------------------------------------
   datanode:
     image: hadoop-base:${HADOOP_VERSION:-3.3.6}
@@ -134,7 +136,8 @@ services:
       TZ: ${TZ:-Asia/Shanghai}
       HADOOP_ROLE: datanode
     ports:
-      - "127.0.0.1:9864:9864"   # Web UI
+      - "127.0.0.1:9864:9864"   # HDFS DataNode Web UI
+      - "127.0.0.1:8042:8042"   # YARN NodeManager Web UI
     volumes:
       - datanode-data:/data/datanode
       - keytabs:/etc/security/keytabs:ro
@@ -145,15 +148,15 @@ services:
       namenode:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://datanode:9864/jmx || exit 1"]
+      test: ["CMD-SHELL", "curl -sf http://datanode:9864/jmx && PORT_HEX=$$(printf '%X' 8042); grep -q \":$${PORT_HEX} \" /proc/net/tcp6 2>/dev/null || grep -q \":$${PORT_HEX} \" /proc/net/tcp 2>/dev/null"]
       interval: 15s
       timeout: 10s
-      retries: 10
-      start_period: 20s
+      retries: 15
+      start_period: 30s
     deploy:
       resources:
         limits:
-          memory: 768M
+          memory: 3g
     networks:
       - hive-net
     restart: unless-stopped
@@ -205,22 +208,20 @@ services:
     restart: unless-stopped
 
   # --------------------------------------------------------
-  # Spark Master + Thrift Server
+  # Spark Thrift Server (YARN client mode)
   # --------------------------------------------------------
-  spark-master:
+  spark-thrift:
     build:
       context: ./spark
       args:
         SPARK_VERSION: ${SPARK_VERSION:-3.5.3}
     image: spark:${SPARK_VERSION:-3.5.3}
-    container_name: spark-master
-    hostname: spark-master
+    container_name: spark-thrift
+    hostname: spark-thrift
     domainname: hive-net
     environment:
       TZ: ${TZ:-Asia/Shanghai}
-      SPARK_ROLE: master
     ports:
-      - "127.0.0.1:18080:8080"  # Spark Master Web UI
       - "127.0.0.1:10000:10000" # Thrift Server (JDBC)
       - "127.0.0.1:4040:4040"   # Spark Application UI
     volumes:
@@ -229,6 +230,8 @@ services:
     depends_on:
       kdc:
         condition: service_healthy
+      namenode:
+        condition: service_healthy
       hive-metastore:
         condition: service_healthy
     healthcheck:
@@ -236,40 +239,7 @@ services:
       interval: 15s
       timeout: 10s
       retries: 20
-      start_period: 60s
-    deploy:
-      resources:
-        limits:
-          memory: 3G
-    networks:
-      - hive-net
-    restart: unless-stopped
-
-  # --------------------------------------------------------
-  # Spark Worker
-  # --------------------------------------------------------
-  spark-worker:
-    image: spark:${SPARK_VERSION:-3.5.3}
-    container_name: spark-worker
-    hostname: spark-worker
-    domainname: hive-net
-    environment:
-      TZ: ${TZ:-Asia/Shanghai}
-      SPARK_ROLE: worker
-    volumes:
-      - keytabs:/etc/security/keytabs:ro
-      - ./kdc/krb5.conf:/etc/krb5.conf:ro
-    depends_on:
-      kdc:
-        condition: service_healthy
-      spark-master:
-        condition: service_started
-    healthcheck:
-      test: ["CMD-SHELL", "nc -z localhost 8081"]
-      interval: 15s
-      timeout: 10s
-      retries: 10
-      start_period: 30s
+      start_period: 300s
     deploy:
       resources:
         limits:

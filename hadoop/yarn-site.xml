@@ -1,0 +1,105 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+<!--
+  YARN Configuration
+  - ResourceManager runs on namenode container
+  - NodeManager runs on datanode container
+  - Spark Shuffle Service for efficient shuffle
+  - Kerberos authentication
+-->
+<configuration>
+    <!-- ResourceManager -->
+    <property>
+        <name>yarn.resourcemanager.hostname</name>
+        <value>namenode.hive-net</value>
+    </property>
+    <!-- Bind all RM ports to 0.0.0.0 so localhost healthchecks (nc -z localhost 8032) work -->
+    <property>
+        <name>yarn.resourcemanager.bind-host</name>
+        <value>0.0.0.0</value>
+    </property>
+    <property>
+        <name>yarn.resourcemanager.address</name>
+        <value>namenode.hive-net:8032</value>
+    </property>
+    <property>
+        <name>yarn.resourcemanager.scheduler.address</name>
+        <value>namenode.hive-net:8030</value>
+    </property>
+    <property>
+        <name>yarn.resourcemanager.resource-tracker.address</name>
+        <value>namenode.hive-net:8031</value>
+    </property>
+    <property>
+        <name>yarn.resourcemanager.webapp.address</name>
+        <value>namenode.hive-net:8088</value>
+    </property>
+
+    <!-- NodeManager resources -->
+    <property>
+        <name>yarn.nodemanager.resource.memory-mb</name>
+        <value>2048</value>
+    </property>
+    <property>
+        <name>yarn.nodemanager.resource.cpu-vcores</name>
+        <value>2</value>
+    </property>
+
+    <!-- Log aggregation -->
+    <property>
+        <name>yarn.log-aggregation-enable</name>
+        <value>true</value>
+    </property>
+    <property>
+        <name>yarn.log-aggregation.retain-seconds</name>
+        <value>86400</value>
+    </property>
+
+    <!-- Kerberos: ResourceManager -->
+    <property>
+        <name>yarn.resourcemanager.principal</name>
+        <value>yarn/_HOST@EXAMPLE.COM</value>
+    </property>
+    <property>
+        <name>yarn.resourcemanager.keytab</name>
+        <value>/etc/security/keytabs/yarn.keytab</value>
+    </property>
+
+    <!-- Kerberos: NodeManager -->
+    <property>
+        <name>yarn.nodemanager.principal</name>
+        <value>yarn/_HOST@EXAMPLE.COM</value>
+    </property>
+    <property>
+        <name>yarn.nodemanager.keytab</name>
+        <value>/etc/security/keytabs/yarn.keytab</value>
+    </property>
+
+    <!-- Container executor (DefaultContainerExecutor for Docker dev environment) -->
+    <property>
+        <name>yarn.nodemanager.container-executor.class</name>
+        <value>org.apache.hadoop.yarn.server.nodemanager.DefaultContainerExecutor</value>
+    </property>
+
+    <!-- Scheduler memory bounds -->
+    <property>
+        <name>yarn.scheduler.minimum-allocation-mb</name>
+        <value>512</value>
+    </property>
+    <property>
+        <name>yarn.scheduler.maximum-allocation-mb</name>
+        <value>2048</value>
+    </property>
+
+    <!-- Disable virtual/physical memory checks in Docker.
+         JVM virtual memory >> physical memory, causing YARN to falsely
+         kill containers before they do any work. -->
+    <property>
+        <name>yarn.nodemanager.vmem-check-enabled</name>
+        <value>false</value>
+    </property>
+    <property>
+        <name>yarn.nodemanager.pmem-check-enabled</name>
+        <value>false</value>
+    </property>
+</configuration>

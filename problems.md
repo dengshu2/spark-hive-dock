@@ -1,8 +1,8 @@
 # Kerberos 集成问题清单
 
-> **项目**: `spark-hive-dock` — Spark + Hive Metastore + HDFS Docker 集群 + MIT Kerberos
-> **日期**: 2026-03-25
-> **当前状态**: ✅ 端到端测试已通过（CREATE DB → CREATE TABLE → INSERT → SELECT），但有两个遗留问题需处理
+> **项目**: `spark-hive-dock` — Spark + Hive Metastore + HDFS Docker 集群 + MIT Kerberos + YARN
+> **日期**: 2026-03-26
+> **当前状态**: ✅ 已迁移到 Spark on YARN 模式，所有遗留问题均已处理
 
 ---
 
@@ -27,71 +27,19 @@ SASL 模式 + 非特权端口 + 不设置 `HDFS_DATANODE_SECURE_USER`。
 **根因**: `spark` 用户不在 `supergroup` 组，775 权限不足。
 **修复**: `entrypoint-metastore.sh` 中 chmod `1777`。
 
----
+### ✅ 遗留问题 1（已解决）：Spark Thrift Server 使用 `local[*]` 模式
+**根因**: Standalone 模式下 Spark 不支持 Delegation Token 自动分发给 Executor。
+**修复**: 迁移到 Spark on YARN 模式。ResourceManager 与 NameNode 同容器，NodeManager 与 DataNode 同容器。YARN 原生支持 Delegation Token 分发和续签。
 
-## 🔴 遗留问题 1：Spark Thrift Server 使用 `local[*]` 模式（非分布式）
-
-### 现状
-Thrift Server 当前使用 `--master local[*]` 运行，所有 SQL 计算都在 Driver JVM 中完成。Spark Worker 容器虽然运行但实际上没有被使用。
-
-### 根因
-在 Standalone 模式（`spark://spark-master:7077`）下，Executor 运行在 Worker 容器的 JVM 中。Driver 通过 `--principal`/`--keytab` 拥有 Kerberos Subject，但 Executor JVM 没有相应的 Kerberos 凭据。当 Executor 尝试写 ORC 文件到 HDFS 时，报错：
-```
-Client cannot authenticate via:[TOKEN, KERBEROS]
-```
-
-### 预期行为
-Spark 的 `--principal`/`--keytab` 应在 Driver 启动时获取 HDFS Delegation Token，并通过 Spark 内部机制分发给 Executor。但在长时间运行的 Thrift Server 中，每个 beeline session 触发的查询不一定能获取到初始的 Delegation Token。
-
-### 需要研究的方向
-1. **Delegation Token 分发**: `spark.kerberos.access.hadoopFileSystems` 配置是否能解决
-2. **Executor keytab login**: `spark.executorEnv.HADOOP_JAAS_DEBUG=true` + 让 Executor 也执行 keytab login
-3. **Token renewal**: Thrift Server 是否支持自动续签 Delegation Token
-4. **Spark 3.5 standalone Kerberos**: 查阅是否有官方的 standalone + Kerberos + HDFS 最佳实践
-
-### 相关文件
-- `spark/entrypoint.sh` (line 83): `--master local[*]` ← 需要改回 `spark://spark-master:7077`
-- `spark/spark-defaults.conf`: `spark.kerberos.principal` / `spark.kerberos.keytab`
-- keytab 共享卷: Worker 容器已挂载相同的 keytab 文件
-
-### 验证方法
-```bash
-# 1. 改回 standalone 模式
-# spark/entrypoint.sh: --master spark://spark-master:7077
-
-# 2. 重建测试
-docker compose down -v && make build && docker compose up -d
-
-# 3. 运行测试 (INSERT 操作会触发 Executor 写 HDFS)
-bash scripts/init-test-data.sh
-
-# 4. 如果失败，检查 Worker 日志
-docker compose logs spark-worker | grep -i "kerberos\|auth\|token"
-```
-
----
-
-## 🟡 遗留问题 2：`beeline-connect.sh` 脚本使用旧 principal
-
-### 现状
-`scripts/beeline-connect.sh` 中的 JDBC URI 仍使用短主机名 principal：
-```bash
--u "jdbc:hive2://localhost:10000/;principal=spark/spark-master@EXAMPLE.COM"
-```
-
-### 修复建议
-```bash
--u "jdbc:hive2://spark-master.hive-net:10000/;principal=spark/spark-master.hive-net@EXAMPLE.COM"
-```
-
-相关：`scripts/init-test-data.sh` 已更新为 Kerberos 版本，可参考其中的 JDBC URI 格式。
+### ✅ 遗留问题 2（已解决）：`beeline-connect.sh` 脚本使用旧 principal
+**修复**: 更新为 `spark/spark-thrift.hive-net@EXAMPLE.COM`。
 
 ---
 
 ## 🟡 遗留问题 3：`spark/hdfs-site.xml` 是 `hadoop/hdfs-site.xml` 的手动复制
 
 ### 现状
-`spark/hdfs-site.xml` 是从 `hadoop/hdfs-site.xml` 手动 `cp` 过来的静态副本。如果未来修改 Hadoop 侧的 `hdfs-site.xml`，Spark 侧不会自动同步。
+`spark/hdfs-site.xml` 是从 `hadoop/hdfs-site.xml` 手动 `cp` 过来的静态副本。如果未来修改 Hadoop 侧的 `hdfs-site.xml`，Spark 侧不会自动同步。同样适用于 `yarn-site.xml` 和 `mapred-site.xml`。
 
 ### 修复建议
 - 方案 A: 在 Makefile 的 `build` target 中添加自动同步步骤
@@ -116,7 +64,9 @@ docker compose logs spark-worker | grep -i "kerberos\|auth\|token"
 
 ```
 beeline (GSSAPI)
-  → Spark Thrift Server (:10000, principal=spark/_HOST, local[*] mode)
+  → Spark Thrift Server (:10000, principal=spark/_HOST, YARN client mode)
+    → YARN ResourceManager (:8032, on namenode container)
+      → YARN NodeManager (on datanode container, runs Spark Executors)
     → Hive MetaStore (:9083, SASL GSSAPI, principal=hive/_HOST)
       → HDFS NameNode (:9000, Kerberos RPC, principal=hdfs/_HOST)
         → HDFS DataNode (SASL auth, principal=hdfs/_HOST)

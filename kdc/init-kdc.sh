@@ -19,6 +19,12 @@ READY_FILE="${KEYTAB_DIR}/.kdc-ready"
 # e.g. "namenode" becomes "namenode.hive-net" in DNS
 DOCKER_DOMAIN="hive-net"
 
+# Remove stale ready marker so dependent containers wait for fresh keytabs.
+# Without this, a persistent keytabs volume keeps the old marker across
+# container recreations, causing kinit to fail with "Password incorrect"
+# because the old keytabs no longer match the new KDC database.
+rm -f "${READY_FILE}"
+
 echo "============================================================"
 echo " KDC Initialization — Realm: ${REALM}"
 echo "============================================================"
@@ -86,13 +92,17 @@ create_principal "HTTP/datanode.${DOCKER_DOMAIN}@${REALM}"
 create_principal "hive/hive-metastore@${REALM}"
 create_principal "hive/hive-metastore.${DOCKER_DOMAIN}@${REALM}"
 
-# Spark
-create_principal "spark/spark-master@${REALM}"
-create_principal "spark/spark-master.${DOCKER_DOMAIN}@${REALM}"
-create_principal "spark/spark-worker@${REALM}"
-create_principal "spark/spark-worker.${DOCKER_DOMAIN}@${REALM}"
-create_principal "HTTP/spark-master@${REALM}"
-create_principal "HTTP/spark-master.${DOCKER_DOMAIN}@${REALM}"
+# YARN (ResourceManager on namenode, NodeManager on datanode)
+create_principal "yarn/namenode@${REALM}"
+create_principal "yarn/namenode.${DOCKER_DOMAIN}@${REALM}"
+create_principal "yarn/datanode@${REALM}"
+create_principal "yarn/datanode.${DOCKER_DOMAIN}@${REALM}"
+
+# Spark (Thrift Server)
+create_principal "spark/spark-thrift@${REALM}"
+create_principal "spark/spark-thrift.${DOCKER_DOMAIN}@${REALM}"
+create_principal "HTTP/spark-thrift@${REALM}"
+create_principal "HTTP/spark-thrift.${DOCKER_DOMAIN}@${REALM}"
 
 # Client (for testing / beeline)
 create_principal "client@${REALM}"
@@ -122,14 +132,19 @@ kadmin.local -q "ktadd -k ${KEYTAB_DIR}/hive.keytab \
     hive/hive-metastore@${REALM} \
     hive/hive-metastore.${DOCKER_DOMAIN}@${REALM}"
 
-# Spark keytab (master + worker)
+# YARN keytab (ResourceManager + NodeManager)
+kadmin.local -q "ktadd -k ${KEYTAB_DIR}/yarn.keytab \
+    yarn/namenode@${REALM} \
+    yarn/namenode.${DOCKER_DOMAIN}@${REALM} \
+    yarn/datanode@${REALM} \
+    yarn/datanode.${DOCKER_DOMAIN}@${REALM}"
+
+# Spark keytab (Thrift Server)
 kadmin.local -q "ktadd -k ${KEYTAB_DIR}/spark.keytab \
-    spark/spark-master@${REALM} \
-    spark/spark-master.${DOCKER_DOMAIN}@${REALM} \
-    spark/spark-worker@${REALM} \
-    spark/spark-worker.${DOCKER_DOMAIN}@${REALM} \
-    HTTP/spark-master@${REALM} \
-    HTTP/spark-master.${DOCKER_DOMAIN}@${REALM}"
+    spark/spark-thrift@${REALM} \
+    spark/spark-thrift.${DOCKER_DOMAIN}@${REALM} \
+    HTTP/spark-thrift@${REALM} \
+    HTTP/spark-thrift.${DOCKER_DOMAIN}@${REALM}"
 
 # Client keytab (for testing)
 kadmin.local -q "ktadd -k ${KEYTAB_DIR}/client.keytab \
