@@ -2,7 +2,7 @@
 
 > **项目**: `spark-hive-dock` — Spark + Hive Metastore + HDFS Docker 集群 + MIT Kerberos + YARN
 > **日期**: 2026-03-26
-> **当前状态**: ✅ 已迁移到 Spark on YARN 模式，所有遗留问题均已处理
+> **当前状态**: ✅ Spark on YARN 模式稳定运行，全部启动问题已解决
 
 ---
 
@@ -36,10 +36,42 @@ SASL 模式 + 非特权端口 + 不设置 `HDFS_DATANODE_SECURE_USER`。
 
 ---
 
-## 🟡 遗留问题 3：`spark/hdfs-site.xml` 是 `hadoop/hdfs-site.xml` 的手动复制
+## YARN 集成启动问题（本次会话）
+
+### ✅ 问题 6：kinit 报 "Password incorrect"（KDC ready marker 竞态）
+**根因**: `keytabs` volume 中残留上一轮容器的 `.kdc-ready` 标记。KDC 容器重建后，Docker healthcheck 立即通过（旧标记仍在），namenode 在 `init-kdc.sh` 还未重新生成 keytab 之前就执行 `kinit`，读到的是过期 keytab。
+**修复**: `kdc/init-kdc.sh` 启动时首先执行 `rm -f "${READY_FILE}"`，强制依赖方等待本次初始化完成。
+
+### ✅ 问题 7：NameNode healthcheck 失败（ResourceManager 绑定 FQDN）
+**根因**: `yarn-site.xml` 中 `yarn.resourcemanager.address=namenode.hive-net:8032`，RM 监听在 FQDN 对应的 IP 而非 `0.0.0.0`，healthcheck 的 `nc -z localhost 8032` 无法连通。
+**修复**: `hadoop/yarn-site.xml` 增加 `yarn.resourcemanager.bind-host=0.0.0.0`，与 NameNode 的 `dfs.namenode.rpc-bind-host` 做法一致。
+
+### ✅ 问题 8：NodeManager 启动崩溃（Spark shuffle JAR 缺失）
+**根因**: Hadoop Dockerfile 使用 `tar --wildcards` 提取 Spark shuffle JAR，因 glob 匹配问题静默失败（无报错退出），导致 `/opt/spark-yarn/` 为空目录。NodeManager 尝试加载 `YarnShuffleService` 时抛 `ClassNotFoundException`。
+**修复**: 移除 `yarn.nodemanager.aux-services=spark_shuffle` 配置及对应 Dockerfile 下载步骤。本集群使用固定 executor 数量（`spark.executor.instances=1`）且不启用动态分配，无需外部 Shuffle Service。
+
+### ✅ 问题 9：YARN 虚拟内存检查误杀容器
+**根因**: `yarn.nodemanager.vmem-check-enabled` 默认为 `true`，虚拟内存上限比率 2.1x。JVM 进程的虚拟内存远高于物理内存，在 Docker 环境下触发 YARN 将刚分配的 executor 容器立即 Kill，报 "exceeded virtual memory limits"。
+**修复**: `hadoop/yarn-site.xml` 和 `spark/yarn-site.xml` 均添加 `yarn.nodemanager.vmem-check-enabled=false` 和 `yarn.nodemanager.pmem-check-enabled=false`。
+
+### ✅ 问题 10：datanode 内存上限不足，executor 无法分配
+**根因**: `yarn.nodemanager.resource.memory-mb=2048` 但 datanode 容器上限仅 1536M。DataNode JVM + NodeManager JVM 已占用约 768MB，剩余不足以容纳 executor 容器（1g + 384MB overhead = 1408MB）。
+**修复**: `docker-compose.yml` 将 datanode 内存上限从 `1536M` 提升至 `3g`。
+
+### ✅ 问题 11：YARN 无法分配 executor（AM + executor 超出 NM 容量）
+**根因**: 单个 NodeManager 容量 2048MB，AM 容器占用 1024MB，剩余 1024MB 无法放下 executor（1g heap + 384MB overhead → 实际申请 1408MB，调度最小粒度 512MB 对齐后为 1536MB）。
+**修复**: `spark/spark-defaults.conf` 将 `spark.executor.memory` 从 `1g` 降至 `512m`，使 AM（1024MB）+ executor（1024MB）= 2048MB 恰好填满 NM 容量。
+
+### ✅ 问题 12：Spark staging 目录权限拒绝
+**根因**: Spark on YARN 提交时需在 HDFS 创建 `/user/spark/.sparkStaging`，但 `/user` 目录权限为 `drwxr-xr-x`（755，属主 `hdfs`），`spark` 用户无写权限。
+**修复**: `spark/spark-defaults.conf` 设置 `spark.yarn.stagingDir=hdfs://namenode.hive-net:9000/tmp/spark-staging`，`/tmp` 目录已由 hive-metastore entrypoint 设为 `1777`。
+
+---
+
+## 🟡 遗留问题 3：`spark/` 下的 Hadoop 配置文件是手动静态副本
 
 ### 现状
-`spark/hdfs-site.xml` 是从 `hadoop/hdfs-site.xml` 手动 `cp` 过来的静态副本。如果未来修改 Hadoop 侧的 `hdfs-site.xml`，Spark 侧不会自动同步。同样适用于 `yarn-site.xml` 和 `mapred-site.xml`。
+`spark/{hdfs-site,yarn-site,mapred-site}.xml` 均是从 `hadoop/` 手动复制的静态副本。修改 Hadoop 侧配置后 Spark 侧不会自动同步，容易造成两侧配置漂移。
 
 ### 修复建议
 - 方案 A: 在 Makefile 的 `build` target 中添加自动同步步骤
