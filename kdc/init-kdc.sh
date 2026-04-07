@@ -107,6 +107,14 @@ create_principal "HTTP/spark-thrift.${DOCKER_DOMAIN}@${REALM}"
 # Client (for testing / beeline)
 create_principal "client@${REALM}"
 
+# ClickHouse (external Hive/HDFS reads)
+create_principal "clickhouse/clickhouse-server@${REALM}"
+create_principal "clickhouse/clickhouse-server.${DOCKER_DOMAIN}@${REALM}"
+
+# hive-sync (ETL sync service)
+create_principal "hive-sync/hive-sync-server@${REALM}"
+create_principal "hive-sync/hive-sync-server.${DOCKER_DOMAIN}@${REALM}"
+
 echo "[kdc] All principals created."
 
 # -------------------------------------------------------
@@ -149,6 +157,16 @@ kadmin.local -q "ktadd -k ${KEYTAB_DIR}/spark.keytab \
 # Client keytab (for testing)
 kadmin.local -q "ktadd -k ${KEYTAB_DIR}/client.keytab \
     client@${REALM}"
+
+# ClickHouse keytab
+kadmin.local -q "ktadd -k ${KEYTAB_DIR}/clickhouse.keytab \
+    clickhouse/clickhouse-server@${REALM} \
+    clickhouse/clickhouse-server.${DOCKER_DOMAIN}@${REALM}"
+
+# hive-sync keytab
+kadmin.local -q "ktadd -k ${KEYTAB_DIR}/hive-sync.keytab \
+    hive-sync/hive-sync-server@${REALM} \
+    hive-sync/hive-sync-server.${DOCKER_DOMAIN}@${REALM}"
 
 # Make keytabs readable by all containers
 chmod 444 "${KEYTAB_DIR}"/*.keytab
