@@ -12,7 +12,8 @@ LABEL description="Hive 3.1.3 Metastore on Hadoop 3.3.6"
 # Build arguments
 ARG HIVE_VERSION=3.1.3
 ARG MYSQL_CONNECTOR_VERSION=8.0.28
-ARG HIVE_URL=https://archive.apache.org/dist/hive/hive-${HIVE_VERSION}/apache-hive-${HIVE_VERSION}-bin.tar.gz
+# archive.apache.org caps bandwidth at ~40KB/s; huaweicloud mirror is ~140x faster
+ARG HIVE_URL=https://mirrors.huaweicloud.com/apache/hive/hive-${HIVE_VERSION}/apache-hive-${HIVE_VERSION}-bin.tar.gz
 ARG MYSQL_CONNECTOR_URL=https://repo1.maven.org/maven2/mysql/mysql-connector-java/${MYSQL_CONNECTOR_VERSION}/mysql-connector-java-${MYSQL_CONNECTOR_VERSION}.jar
 
 # Environment variables

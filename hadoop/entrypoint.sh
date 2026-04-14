@@ -73,12 +73,23 @@ case "${HADOOP_ROLE}" in
         kinit -kt /etc/security/keytabs/hdfs.keytab hdfs/${FQDN}@EXAMPLE.COM
         klist
 
-        # Format namenode if not already formatted
+        # Format namenode if not already formatted.
+        # On Hadoop version bumps, HDFS metadata layout may need upgrade:
+        # a per-version marker file triggers `-upgrade` once, then normal
+        # startup thereafter. Changing HADOOP_VERSION creates a new marker
+        # name and re-triggers the upgrade automatically.
+        UPGRADE_MARKER="/data/namenode/.upgraded-to-${HADOOP_VERSION}"
+        NAMENODE_START_FLAG=""
         if [ ! -f /data/namenode/current/VERSION ]; then
             echo "[entrypoint] Formatting NameNode ..."
             hdfs namenode -format -force -nonInteractive
+            touch "${UPGRADE_MARKER}"
+        elif [ ! -f "${UPGRADE_MARKER}" ]; then
+            echo "[entrypoint] HDFS metadata upgrade needed for Hadoop ${HADOOP_VERSION}"
+            touch "${UPGRADE_MARKER}"
+            NAMENODE_START_FLAG="-upgrade"
         else
-            echo "[entrypoint] NameNode already formatted, skipping."
+            echo "[entrypoint] NameNode already formatted and at current layout, skipping."
         fi
 
         # Start YARN ResourceManager in background
@@ -88,8 +99,8 @@ case "${HADOOP_ROLE}" in
         # Give RM time to initialize
         sleep 5
 
-        echo "[entrypoint] Launching NameNode (foreground) ..."
-        exec hdfs namenode
+        echo "[entrypoint] Launching NameNode (foreground) ${NAMENODE_START_FLAG} ..."
+        exec hdfs namenode ${NAMENODE_START_FLAG}
         ;;
 
     datanode)

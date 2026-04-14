@@ -13,7 +13,8 @@ LABEL description="Spark 3.5.3 Thrift Server with YARN + Kerberos"
 
 ARG SPARK_VERSION=3.5.3
 ARG MYSQL_CONNECTOR_VERSION=8.0.28
-ARG SPARK_URL=https://archive.apache.org/dist/spark/spark-${SPARK_VERSION}/spark-${SPARK_VERSION}-bin-hadoop3.tgz
+# archive.apache.org caps bandwidth at ~40KB/s; huaweicloud mirror is ~140x faster
+ARG SPARK_URL=https://mirrors.huaweicloud.com/apache/spark/spark-${SPARK_VERSION}/spark-${SPARK_VERSION}-bin-hadoop3.tgz
 ARG MYSQL_CONNECTOR_URL=https://repo1.maven.org/maven2/mysql/mysql-connector-java/${MYSQL_CONNECTOR_VERSION}/mysql-connector-java-${MYSQL_CONNECTOR_VERSION}.jar
 
 ENV SPARK_VERSION=${SPARK_VERSION}
