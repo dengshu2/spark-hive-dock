@@ -42,9 +42,9 @@ cat > /etc/krb5kdc/kdc.conf <<EOF
 [realms]
     ${REALM} = {
         database_name = /var/lib/krb5kdc/principal
-        admin_keytab = FILE:/etc/krb5kdc/kadm5.keytab
+        admin_keytab = FILE:/var/lib/krb5kdc/kadm5.keytab
         acl_file = /etc/krb5kdc/kadm5.acl
-        key_stash_file = /etc/krb5kdc/stash
+        key_stash_file = /var/lib/krb5kdc/stash
         max_life = 24h 0m 0s
         max_renewable_life = 7d 0h 0m 0s
         default_principal_flags = +renewable, +forwardable
@@ -123,8 +123,18 @@ echo "[kdc] All principals created."
 echo "[kdc] Exporting keytabs to ${KEYTAB_DIR} ..."
 mkdir -p "${KEYTAB_DIR}"
 
+# Rewrite keytabs from scratch on every start. ktadd appends by default,
+# so without this stale KVNOs from previous runs accumulate in the file.
+# Combined with -norandkey below, each start re-derives keytabs that are
+# byte-identical as long as the persistent KDC database is intact.
+rm -f "${KEYTAB_DIR}"/*.keytab
+
+# -norandkey: export the current DB key without rotating it, so keytabs
+# stay stable across kdc restarts and dependent containers never need to
+# re-kinit just because kdc was recreated.
+
 # HDFS keytab (all HDFS-related principals)
-kadmin.local -q "ktadd -k ${KEYTAB_DIR}/hdfs.keytab \
+kadmin.local -q "ktadd -norandkey -k ${KEYTAB_DIR}/hdfs.keytab \
     hdfs/namenode@${REALM} \
     hdfs/namenode.${DOCKER_DOMAIN}@${REALM} \
     hdfs/datanode@${REALM} \
@@ -136,35 +146,35 @@ kadmin.local -q "ktadd -k ${KEYTAB_DIR}/hdfs.keytab \
     HTTP/datanode.${DOCKER_DOMAIN}@${REALM}"
 
 # Hive keytab
-kadmin.local -q "ktadd -k ${KEYTAB_DIR}/hive.keytab \
+kadmin.local -q "ktadd -norandkey -k ${KEYTAB_DIR}/hive.keytab \
     hive/hive-metastore@${REALM} \
     hive/hive-metastore.${DOCKER_DOMAIN}@${REALM}"
 
 # YARN keytab (ResourceManager + NodeManager)
-kadmin.local -q "ktadd -k ${KEYTAB_DIR}/yarn.keytab \
+kadmin.local -q "ktadd -norandkey -k ${KEYTAB_DIR}/yarn.keytab \
     yarn/namenode@${REALM} \
     yarn/namenode.${DOCKER_DOMAIN}@${REALM} \
     yarn/datanode@${REALM} \
     yarn/datanode.${DOCKER_DOMAIN}@${REALM}"
 
 # Spark keytab (Thrift Server)
-kadmin.local -q "ktadd -k ${KEYTAB_DIR}/spark.keytab \
+kadmin.local -q "ktadd -norandkey -k ${KEYTAB_DIR}/spark.keytab \
     spark/spark-thrift@${REALM} \
     spark/spark-thrift.${DOCKER_DOMAIN}@${REALM} \
     HTTP/spark-thrift@${REALM} \
     HTTP/spark-thrift.${DOCKER_DOMAIN}@${REALM}"
 
 # Client keytab (for testing)
-kadmin.local -q "ktadd -k ${KEYTAB_DIR}/client.keytab \
+kadmin.local -q "ktadd -norandkey -k ${KEYTAB_DIR}/client.keytab \
     client@${REALM}"
 
 # ClickHouse keytab
-kadmin.local -q "ktadd -k ${KEYTAB_DIR}/clickhouse.keytab \
+kadmin.local -q "ktadd -norandkey -k ${KEYTAB_DIR}/clickhouse.keytab \
     clickhouse/clickhouse-server@${REALM} \
     clickhouse/clickhouse-server.${DOCKER_DOMAIN}@${REALM}"
 
 # hive-sync keytab
-kadmin.local -q "ktadd -k ${KEYTAB_DIR}/hive-sync.keytab \
+kadmin.local -q "ktadd -norandkey -k ${KEYTAB_DIR}/hive-sync.keytab \
     hive-sync/hive-sync-server@${REALM} \
     hive-sync/hive-sync-server.${DOCKER_DOMAIN}@${REALM}"
 

@@ -38,6 +38,7 @@ services:
       KRB5_KDC_PASSWORD: ${KRB5_KDC_PASSWORD:-kdc_admin_2024}
     volumes:
       - keytabs:/etc/security/keytabs
+      - krb5kdc-data:/var/lib/krb5kdc
     healthcheck:
       test: ["CMD-SHELL", "test -f /etc/security/keytabs/.kdc-ready"]
       interval: 5s
@@ -259,6 +260,8 @@ volumes:
   datanode-data:
     driver: local
   keytabs:
+    driver: local
+  krb5kdc-data:
     driver: local
 
 # ============================================================
