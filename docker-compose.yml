@@ -216,7 +216,7 @@ services:
       context: ./spark
       args:
         SPARK_VERSION: ${SPARK_VERSION:-3.5.3}
-    image: spark:${SPARK_VERSION:-3.5.3}
+    image: spark-hive-custom:${SPARK_VERSION:-3.5.3}
     container_name: spark-thrift
     hostname: spark-thrift
     domainname: hive-net
