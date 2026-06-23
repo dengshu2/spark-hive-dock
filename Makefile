@@ -7,7 +7,7 @@
 #   make up      — build + start all services
 #   make down    — stop and remove containers
 #   make clean   — stop, remove containers, volumes, and images
-#   make test    — run smoke test against Spark Thrift Server
+#   make test    — run smoke test via spark-sql (local mode)
 #   make kinit   — verify Kerberos tickets on all services
 #   make logs    — follow all service logs
 #   make status  — show service health status
@@ -25,7 +25,7 @@ build:
 	@echo "=== [2/3] Building hadoop-base (HDFS + YARN) ==="
 	docker compose build namenode
 	@echo "=== [3/3] Building hive-metastore + spark (parallel) ==="
-	docker compose build hive-metastore spark-thrift
+	docker compose build hive-metastore spark-connect
 
 # -- Lifecycle -------------------------------------------
 up: build
@@ -63,8 +63,8 @@ kinit:
 	@echo "--- Hive Metastore ---"
 	@docker exec hive-metastore klist 2>/dev/null || echo "No ticket"
 	@echo ""
-	@echo "--- Spark Thrift ---"
-	@docker exec spark-thrift klist 2>/dev/null || echo "No ticket"
+	@echo "--- Spark Connect ---"
+	@docker exec spark-connect klist 2>/dev/null || echo "No ticket"
 
 # -- YARN Status ------------------------------------------
 yarn-status:
@@ -74,17 +74,20 @@ yarn-status:
 	@docker exec namenode yarn application -list 2>/dev/null || echo "No applications"
 
 # -- Smoke Test ------------------------------------------
+# Uses spark-sql in local mode (talks directly to the Hive Metastore over
+# Kerberos SASL — no YARN app, no Connect client needed).
 test:
-	@echo "=== Smoke Test: Spark SQL via Thrift (YARN + Kerberos) ==="
-	@docker exec spark-thrift /opt/spark/bin/beeline \
-		-u "jdbc:hive2://spark-thrift.hive-net:10000/;principal=spark/spark-thrift.hive-net@EXAMPLE.COM" \
-		-e "CREATE DATABASE IF NOT EXISTS smoke_test; \
+	@echo "=== Smoke Test: spark-sql local mode (Kerberos) ==="
+	@docker exec spark-connect bash -lc "\
+		kinit -kt /etc/security/keytabs/spark.keytab spark/spark-connect.hive-net@EXAMPLE.COM && \
+		/opt/spark/bin/spark-sql --master 'local[*]' \
+		-e \"CREATE DATABASE IF NOT EXISTS smoke_test; \
 		    USE smoke_test; \
 		    CREATE TABLE IF NOT EXISTS t1 (id INT, name STRING); \
 		    INSERT INTO t1 VALUES (1, 'hello'), (2, 'world'); \
 		    SELECT * FROM t1; \
 		    DROP TABLE t1; \
-		    DROP DATABASE smoke_test;" \
+		    DROP DATABASE smoke_test;\"" \
 		2>&1 | tail -20
 	@echo "=== Smoke test passed ==="
 

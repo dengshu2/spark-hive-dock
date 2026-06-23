@@ -98,13 +98,13 @@ create_principal "yarn/namenode.${DOCKER_DOMAIN}@${REALM}"
 create_principal "yarn/datanode@${REALM}"
 create_principal "yarn/datanode.${DOCKER_DOMAIN}@${REALM}"
 
-# Spark (Thrift Server)
-create_principal "spark/spark-thrift@${REALM}"
-create_principal "spark/spark-thrift.${DOCKER_DOMAIN}@${REALM}"
-create_principal "HTTP/spark-thrift@${REALM}"
-create_principal "HTTP/spark-thrift.${DOCKER_DOMAIN}@${REALM}"
+# Spark (Connect Server)
+create_principal "spark/spark-connect@${REALM}"
+create_principal "spark/spark-connect.${DOCKER_DOMAIN}@${REALM}"
+create_principal "HTTP/spark-connect@${REALM}"
+create_principal "HTTP/spark-connect.${DOCKER_DOMAIN}@${REALM}"
 
-# Client (for testing / beeline)
+# Client (for testing / interactive sessions)
 create_principal "client@${REALM}"
 
 # ClickHouse (external Hive/HDFS reads)
@@ -157,12 +157,12 @@ kadmin.local -q "ktadd -norandkey -k ${KEYTAB_DIR}/yarn.keytab \
     yarn/datanode@${REALM} \
     yarn/datanode.${DOCKER_DOMAIN}@${REALM}"
 
-# Spark keytab (Thrift Server)
+# Spark keytab (Connect Server)
 kadmin.local -q "ktadd -norandkey -k ${KEYTAB_DIR}/spark.keytab \
-    spark/spark-thrift@${REALM} \
-    spark/spark-thrift.${DOCKER_DOMAIN}@${REALM} \
-    HTTP/spark-thrift@${REALM} \
-    HTTP/spark-thrift.${DOCKER_DOMAIN}@${REALM}"
+    spark/spark-connect@${REALM} \
+    spark/spark-connect.${DOCKER_DOMAIN}@${REALM} \
+    HTTP/spark-connect@${REALM} \
+    HTTP/spark-connect.${DOCKER_DOMAIN}@${REALM}"
 
 # Client keytab (for testing)
 kadmin.local -q "ktadd -norandkey -k ${KEYTAB_DIR}/client.keytab \

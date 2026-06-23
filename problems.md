@@ -48,7 +48,7 @@ SASL 模式 + 非特权端口 + 不设置 `HDFS_DATANODE_SECURE_USER`。
 
 ### ✅ 问题 8：NodeManager 启动崩溃（Spark shuffle JAR 缺失）
 **根因**: Hadoop Dockerfile 使用 `tar --wildcards` 提取 Spark shuffle JAR，因 glob 匹配问题静默失败（无报错退出），导致 `/opt/spark-yarn/` 为空目录。NodeManager 尝试加载 `YarnShuffleService` 时抛 `ClassNotFoundException`。
-**修复**: 移除 `yarn.nodemanager.aux-services=spark_shuffle` 配置及对应 Dockerfile 下载步骤。本集群使用固定 executor 数量（`spark.executor.instances=1`）且不启用动态分配，无需外部 Shuffle Service。
+**修复**: 移除 `yarn.nodemanager.aux-services=spark_shuffle` 配置及对应 Dockerfile 下载步骤。集群迁移到 Spark Connect 后启用了动态分配，但采用 driver 端的 `spark.dynamicAllocation.shuffleTracking.enabled=true`（而非外部 Shuffle Service），因此 NodeManager 仍无需 `spark_shuffle` aux-service。
 
 ### ✅ 问题 9：YARN 虚拟内存检查误杀容器
 **根因**: `yarn.nodemanager.vmem-check-enabled` 默认为 `true`，虚拟内存上限比率 2.1x。JVM 进程的虚拟内存远高于物理内存，在 Docker 环境下触发 YARN 将刚分配的 executor 容器立即 Kill，报 "exceeded virtual memory limits"。
@@ -95,8 +95,8 @@ SASL 模式 + 非特权端口 + 不设置 `HDFS_DATANODE_SECURE_USER`。
 ## 当前配置架构
 
 ```
-beeline (GSSAPI)
-  → Spark Thrift Server (:10000, principal=spark/_HOST, YARN client mode)
+Spark Connect client (sc://:15002)
+  → Spark Connect Server (principal=spark/_HOST, YARN client mode, dynamic allocation 0–3 executors)
     → YARN ResourceManager (:8032, on namenode container)
       → YARN NodeManager (on datanode container, runs Spark Executors)
     → Hive MetaStore (:9083, SASL GSSAPI, principal=hive/_HOST)

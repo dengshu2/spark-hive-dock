@@ -2,13 +2,13 @@
 
 English | [中文](README_CN.md)
 
-Dockerized Spark SQL cluster with Hive Metastore on Hadoop HDFS, secured with **MIT Kerberos** authentication and **YARN** resource management with delegation token distribution. MySQL serves as the Metastore backend. Designed for development and testing — **not for production use**.
+Dockerized Spark SQL cluster with Hive Metastore on Hadoop HDFS, secured with **MIT Kerberos** authentication and **YARN** resource management with delegation token distribution. Programmatic access is provided by the **Spark Connect Server** (gRPC, Spark 3.5+) over `sc://`. MySQL serves as the Metastore backend. Designed for development and testing — **not for production use**.
 
 ## Version Matrix
 
 | Component | Version | JDK |
 |-----------|---------|-----|
-| Hadoop | 3.3.6 | OpenJDK 8 (Temurin) |
+| Hadoop | 3.4.1 | OpenJDK 8 (Temurin) |
 | Hive Metastore | 3.1.3 | OpenJDK 8 (Temurin) |
 | Spark | 3.5.3 | OpenJDK 11 (Temurin) |
 | MySQL | 8.0 | — |
@@ -35,21 +35,21 @@ Dockerized Spark SQL cluster with Hive Metastore on Hadoop HDFS, secured with **
                      │  └────────────┬─────────────┘        │
                      │               │                      │
   ┌──────────────┐   │  ┌────────────▼─────────────┐       │
-  │   Beeline    │──►│  │  Spark Master             │       │
-  │  (GSSAPI)    │   │  │  :7077 (RPC)              │       │
-  └──────────────┘   │  │  :10000 (Thrift / JDBC)   │       │
-                     │  │  :18080 (Web UI)          │       │
+  │ Spark Connect│──►│  │  Spark Connect Server     │       │
+  │   client     │   │  │  :15002 (gRPC)            │       │
+  │  (sc://...)  │   │  │  :4040  (Spark UI)        │       │
+  └──────────────┘   │  │  YARN client mode         │       │
                      │  └────────────┬─────────────┘       │
-                     │               │                      │
+                     │               │ submits app          │
                      │  ┌────────────▼─────────────┐       │
-                     │  │    Spark Worker           │       │
+                     │  │  YARN Executors (NodeMgr) │       │
                      │  └──────────────────────────┘       │
                      └──────────────────────────────────────┘
 ```
 
 **Authentication flow**: KDC provisions principals and keytabs → all services authenticate via GSSAPI/SASL
 
-**Data flow**: Beeline → Spark Thrift Server (JDBC :10000) → Hive Metastore (schema) → HDFS (data storage)
+**Data flow**: Spark Connect client (`sc://:15002`) → Spark Connect Server (YARN client) → Hive Metastore (schema) → HDFS (data storage)
 
 ## Quick Start
 
@@ -67,8 +67,8 @@ make status
 # 4. Verify Kerberos tickets
 make kinit
 
-# 5. Connect via Beeline (Kerberos GSSAPI)
-bash scripts/beeline-connect.sh
+# 5. Open an interactive spark-sql shell (local mode, Kerberos)
+bash scripts/spark-sql-shell.sh
 
 # 6. (Optional) Load test data
 bash scripts/init-test-data.sh
@@ -76,6 +76,24 @@ bash scripts/init-test-data.sh
 # 7. Run smoke test
 make test
 ```
+
+### Connecting a Spark Connect client
+
+The cluster exposes the **Spark Connect Server** on `127.0.0.1:15002` (gRPC). From the host:
+
+```bash
+pip install "pyspark[connect]==3.5.3"
+```
+
+```python
+from pyspark.sql import SparkSession
+
+spark = SparkSession.builder.remote("sc://localhost:15002").getOrCreate()
+spark.sql("SHOW DATABASES").show()
+spark.sql("SELECT * FROM sample_db.employees").show()
+```
+
+> The Connect server holds the Kerberos identity (`spark` principal) and submits work to YARN on the client's behalf — clients do **not** need their own keytab. The gRPC port is bound to `127.0.0.1` only; do not expose it publicly (Spark Connect has no built-in strong auth in 3.5).
 
 ## Make Commands
 
@@ -92,7 +110,7 @@ make test
 | `make logs` | Follow all service logs |
 | `make restart` | Restart all services |
 
-> Why a Makefile? The `hive-metastore` image depends on `hadoop-base` (`FROM hadoop-base:3.3.6`), but `docker compose build` doesn't guarantee build ordering. The Makefile ensures hadoop-base is built before hive-metastore.
+> Why a Makefile? The `hive-metastore` image depends on `hadoop-base` (`FROM hadoop-base:3.4.1`), but `docker compose build` doesn't guarantee build ordering. The Makefile ensures hadoop-base is built before hive-metastore.
 
 ## Kerberos Configuration
 
@@ -112,7 +130,7 @@ The cluster uses MIT Kerberos for authentication across all services. The KDC co
 | Hive MetaStore | `hive/hive-metastore.hive-net@EXAMPLE.COM` |
 | YARN RM (namenode) | `yarn/namenode.hive-net@EXAMPLE.COM` |
 | YARN NM (datanode) | `yarn/datanode.hive-net@EXAMPLE.COM` |
-| Spark Thrift | `spark/spark-thrift.hive-net@EXAMPLE.COM` |
+| Spark Connect | `spark/spark-connect.hive-net@EXAMPLE.COM` |
 | HTTP (SPNEGO) | `HTTP/<service>.hive-net@EXAMPLE.COM` |
 
 > All services use Docker FQDN (`.hive-net` suffix) for consistent Kerberos `_HOST` principal expansion. The `docker-compose.yml` sets `domainname: hive-net` on every service.
@@ -147,7 +165,7 @@ spark-hive-dock/
 │   ├── krb5.conf             # Kerberos client configuration
 │   └── init-kdc.sh           # Principal provisioning + keytab export
 ├── hadoop/
-│   ├── Dockerfile            # Hadoop 3.3.6 + YARN + Spark Shuffle + Kerberos
+│   ├── Dockerfile            # Hadoop 3.4.1 + YARN + Spark Shuffle + Kerberos
 │   ├── core-site.xml         # HDFS + Kerberos authentication
 │   ├── hdfs-site.xml         # HDFS replication, storage, Kerberos principals
 │   ├── yarn-site.xml         # YARN resource management + Kerberos
@@ -158,18 +176,18 @@ spark-hive-dock/
 │   ├── hive-site.xml         # Metastore SASL/GSSAPI authentication
 │   └── entrypoint-metastore.sh  # Kerberized startup sequence
 ├── spark/
-│   ├── Dockerfile            # Spark 3.5.3 + Thrift Server + krb5-user
+│   ├── Dockerfile            # Spark 3.5.3 + Connect Server + krb5-user
 │   ├── core-site.xml         # HDFS + Kerberos + proxy user config
 │   ├── hdfs-site.xml         # HDFS Kerberos principals (synced from hadoop/)
 │   ├── yarn-site.xml         # YARN client config (synced from hadoop/)
 │   ├── mapred-site.xml       # MapReduce config (synced from hadoop/)
 │   ├── hive-site.xml         # MetaStore SASL client config
-│   ├── spark-defaults.conf   # YARN mode + Kerberos delegation token
-│   └── entrypoint.sh         # Thrift Server (YARN client) + kinit
+│   ├── spark-defaults.conf   # YARN mode + Kerberos + Connect gRPC port
+│   └── entrypoint.sh         # Connect Server (YARN client) + kinit
 ├── mysql/
 │   └── init.sql              # Metastore DB charset config
 └── scripts/
-    ├── beeline-connect.sh    # Quick Beeline connection (Kerberos)
+    ├── spark-sql-shell.sh    # Interactive spark-sql shell (Kerberos)
     └── init-test-data.sh     # Sample database + table (Kerberized)
 ```
 
@@ -242,7 +260,7 @@ This deployment is intended for local development and testing:
 - `ignore.secure.ports.for.testing=true` allows unprivileged HDFS ports
 - `hive.server2.enable.doAs=false` — no per-user impersonation
 - Proxy user restrictions are fully open (`hadoop.proxyuser.*.hosts=*`)
-- Spark Thrift Server runs in YARN client mode with Executors managed by NodeManager
+- Spark Connect Server runs in YARN client mode with dynamic allocation (0–3 executors), managed by the NodeManager
 
 Do **not** use this configuration in production.
 
