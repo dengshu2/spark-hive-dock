@@ -4,11 +4,16 @@
 # Database: hive_db
 # Tables: orders (partitioned by dt), user_profiles
 # Format: Parquet (ClickHouse Hive engine compatible)
+#
+# Runs via spark-sql in local mode (--master local[*]): direct Hive
+# Metastore access over Kerberos SASL, no YARN app, no Connect client.
+# All DDL + DML is streamed into a single spark-sql session to avoid
+# repeated driver cold starts.
 # ============================================================
 set -e
 
-JDBC_URI="jdbc:hive2://spark-thrift.hive-net:10000/;principal=spark/spark-thrift.hive-net@EXAMPLE.COM"
-BEE="docker exec spark-thrift beeline -u ${JDBC_URI} --silent=true"
+CONTAINER=spark-connect
+PRINCIPAL="spark/spark-connect.hive-net@EXAMPLE.COM"
 
 echo "============================================================"
 echo " Init Hive Tables for ClickHouse Integration"
@@ -16,30 +21,25 @@ echo "============================================================"
 
 # Obtain Kerberos ticket
 echo "[init] Obtaining Kerberos ticket ..."
-docker exec spark-thrift kinit -kt /etc/security/keytabs/spark.keytab \
-    spark/spark-thrift.hive-net@EXAMPLE.COM
+docker exec ${CONTAINER} kinit -kt /etc/security/keytabs/spark.keytab ${PRINCIPAL}
 
-# Wait for Spark Thrift Server
-echo "[init] Waiting for Spark Thrift Server ..."
+# Wait for the Hive Metastore to be reachable
+echo "[init] Waiting for Hive Metastore (9083) ..."
 max_retries=30; retry=0
-while ! docker exec spark-thrift beeline -u "${JDBC_URI}" -e "SELECT 1;" >/dev/null 2>&1; do
+while ! docker exec ${CONTAINER} nc -z hive-metastore 9083 2>/dev/null; do
     retry=$((retry + 1))
-    [ "$retry" -ge "$max_retries" ] && { echo "ERROR: Thrift Server not ready"; exit 1; }
+    [ "$retry" -ge "$max_retries" ] && { echo "ERROR: Hive Metastore not reachable"; exit 1; }
     echo "  attempt ${retry}/${max_retries} ..."; sleep 5
 done
-echo "[init] Spark Thrift Server ready."
+echo "[init] Hive Metastore reachable."
 
-# -------------------------------------------------------
-# Create database
-# -------------------------------------------------------
-echo "[init] Creating database hive_db ..."
-$BEE -e "CREATE DATABASE IF NOT EXISTS hive_db COMMENT 'E-commerce data lake for ClickHouse integration';"
+echo "[init] Creating hive_db tables and loading data ..."
+docker exec -i ${CONTAINER} /opt/spark/bin/spark-sql --master 'local[*]' <<'EOSQL'
+CREATE DATABASE IF NOT EXISTS hive_db COMMENT 'E-commerce data lake for ClickHouse integration';
 
-# -------------------------------------------------------
-# Table 1: user_profiles
-# -------------------------------------------------------
-echo "[init] Creating table hive_db.user_profiles ..."
-$BEE -e "
+-- ----------------------------------------------------------
+-- Table 1: user_profiles
+-- ----------------------------------------------------------
 USE hive_db;
 DROP TABLE IF EXISTS user_profiles;
 CREATE TABLE user_profiles (
@@ -56,11 +56,7 @@ CREATE TABLE user_profiles (
 STORED AS PARQUET
 LOCATION '/user/hive/warehouse/hive_db.db/user_profiles'
 TBLPROPERTIES ('parquet.compression'='SNAPPY');
-"
 
-echo "[init] Inserting user_profiles data ..."
-$BEE -e "
-USE hive_db;
 INSERT INTO user_profiles VALUES
   (1,  'zhang_wei',     'M', 32, 'Beijing',   'Beijing',   '2022-03-10', 'gold',     28650.00),
   (2,  'li_na',         'F', 27, 'Shanghai',  'Shanghai',  '2022-05-18', 'silver',   12300.00),
@@ -77,13 +73,10 @@ INSERT INTO user_profiles VALUES
   (13, 'zhu_gang',      'M', 36, 'Qingdao',   'Shandong',  '2021-06-30', 'silver',   16500.00),
   (14, 'he_shan',       'F', 22, 'Xiamen',    'Fujian',    '2023-08-11', 'bronze',     980.00),
   (15, 'gao_peng',      'M', 45, 'Zhengzhou', 'Henan',     '2020-09-05', 'platinum', 112000.00);
-"
 
-# -------------------------------------------------------
-# Table 2: orders (partitioned by dt)
-# -------------------------------------------------------
-echo "[init] Creating table hive_db.orders ..."
-$BEE -e "
+-- ----------------------------------------------------------
+-- Table 2: orders (partitioned by dt)
+-- ----------------------------------------------------------
 USE hive_db;
 DROP TABLE IF EXISTS orders;
 CREATE TABLE orders (
@@ -104,12 +97,10 @@ PARTITIONED BY (dt STRING COMMENT 'Order date YYYY-MM-DD')
 STORED AS PARQUET
 LOCATION '/user/hive/warehouse/hive_db.db/orders'
 TBLPROPERTIES ('parquet.compression'='SNAPPY');
-"
 
-echo "[init] Inserting orders (Jan 2024) ..."
-$BEE -e "
-USE hive_db;
 SET hive.exec.dynamic.partition.mode=nonstrict;
+
+-- Jan 2024
 INSERT INTO orders PARTITION (dt='2024-01-01') VALUES ('ORD-20240101-001', 3,  2, 1, 5999.00, 300.00,  5699.00, 'completed',  'alipay',       'Guangzhou', 'Guangdong', '2024-01-01 09:12:33');
 INSERT INTO orders PARTITION (dt='2024-01-02') VALUES ('ORD-20240102-001', 8,  5, 2,  199.00,   0.00,   398.00, 'completed',  'wechat',       'Nanjing',   'Jiangsu',   '2024-01-02 14:05:20');
 INSERT INTO orders PARTITION (dt='2024-01-03') VALUES
@@ -132,12 +123,8 @@ INSERT INTO orders PARTITION (dt='2024-01-22') VALUES ('ORD-20240122-001', 1,  8
 INSERT INTO orders PARTITION (dt='2024-01-25') VALUES ('ORD-20240125-001', 8,  2, 1,  5999.00,  300.00,  5699.00, 'pending',    'creditcard',   'Nanjing',   'Jiangsu',   '2024-01-25 17:38:09');
 INSERT INTO orders PARTITION (dt='2024-01-28') VALUES ('ORD-20240128-001', 14, 7, 1,   599.00,    0.00,   599.00, 'completed',  'wechat',       'Xiamen',    'Fujian',    '2024-01-28 08:50:22');
 INSERT INTO orders PARTITION (dt='2024-01-30') VALUES ('ORD-20240130-001', 10, 1, 1, 12999.00, 1500.00, 11499.00, 'completed',  'banktransfer', 'Chongqing', 'Chongqing', '2024-01-30 13:25:47');
-"
 
-echo "[init] Inserting orders (Feb 2024) ..."
-$BEE -e "
-USE hive_db;
-SET hive.exec.dynamic.partition.mode=nonstrict;
+-- Feb 2024
 INSERT INTO orders PARTITION (dt='2024-02-01') VALUES ('ORD-20240201-001', 2,  9, 2,    59.00,    0.00,   118.00, 'completed',  'wechat',       'Shanghai',  'Shanghai',  '2024-02-01 10:00:00');
 INSERT INTO orders PARTITION (dt='2024-02-03') VALUES ('ORD-20240203-001', 5,  3, 1,  8999.00,  450.00,  8549.00, 'completed',  'alipay',       'Chengdu',   'Sichuan',   '2024-02-03 14:22:11');
 INSERT INTO orders PARTITION (dt='2024-02-04') VALUES ('ORD-20240204-001', 7,  6, 3,   349.00,   30.00,  1017.00, 'shipped',    'creditcard',   'Wuhan',     'Hubei',     '2024-02-04 09:15:38');
@@ -153,12 +140,8 @@ INSERT INTO orders PARTITION (dt='2024-02-20') VALUES ('ORD-20240220-001', 9,  6
 INSERT INTO orders PARTITION (dt='2024-02-22') VALUES ('ORD-20240222-001', 13, 5, 3,   199.00,    0.00,   597.00, 'completed',  'creditcard',   'Qingdao',   'Shandong',  '2024-02-22 11:28:34');
 INSERT INTO orders PARTITION (dt='2024-02-25') VALUES ('ORD-20240225-001', 10, 1, 1, 12999.00, 1500.00, 11499.00, 'completed',  'alipay',       'Chongqing', 'Chongqing', '2024-02-25 16:44:17');
 INSERT INTO orders PARTITION (dt='2024-02-28') VALUES ('ORD-20240228-001', 2,  4, 1,  3299.00,  200.00,  3099.00, 'refunded',   'wechat',       'Shanghai',  'Shanghai',  '2024-02-28 10:05:59');
-"
 
-echo "[init] Inserting orders (Mar 2024) ..."
-$BEE -e "
-USE hive_db;
-SET hive.exec.dynamic.partition.mode=nonstrict;
+-- Mar 2024
 INSERT INTO orders PARTITION (dt='2024-03-01') VALUES ('ORD-20240301-001', 5,  2, 1,  5999.00,  300.00,  5699.00, 'completed',  'alipay',       'Chengdu',   'Sichuan',   '2024-03-01 09:30:00');
 INSERT INTO orders PARTITION (dt='2024-03-03') VALUES ('ORD-20240303-001', 1,  8, 5,    89.00,    0.00,   445.00, 'completed',  'wechat',       'Beijing',   'Beijing',   '2024-03-03 14:18:22');
 INSERT INTO orders PARTITION (dt='2024-03-05') VALUES ('ORD-20240305-001', 3,  1, 1, 12999.00, 1000.00, 11999.00, 'shipped',    'creditcard',   'Guangzhou', 'Guangdong', '2024-03-05 11:55:41');
@@ -175,20 +158,14 @@ INSERT INTO orders PARTITION (dt='2024-03-30') VALUES ('ORD-20240330-001', 13, 1
 INSERT INTO orders PARTITION (dt='2024-03-31') VALUES
   ('ORD-20240331-001', 2,  4, 3,  3299.00,  450.00,  9447.00, 'shipped',    'alipay',       'Shanghai',  'Shanghai',  '2024-03-31 08:33:40'),
   ('ORD-20240331-002', 14, 5, 2,   199.00,    0.00,   398.00, 'completed',  'wechat',       'Xiamen',    'Fujian',    '2024-03-31 19:10:28');
-"
 
-# -------------------------------------------------------
-# Verify
-# -------------------------------------------------------
-echo ""
-echo "[init] Verifying ..."
-$BEE -e "
+-- Verify
 SHOW DATABASES;
 USE hive_db;
 SHOW TABLES;
 SELECT COUNT(*) AS user_count FROM user_profiles;
 SELECT dt, COUNT(*) AS orders, ROUND(SUM(total_amount),2) AS gmv FROM orders GROUP BY dt ORDER BY dt LIMIT 10;
-"
+EOSQL
 
 echo ""
 echo "============================================================"

@@ -12,11 +12,11 @@
 #   - namenode        : HDFS NameNode + YARN ResourceManager
 #   - datanode        : HDFS DataNode + YARN NodeManager
 #   - hive-metastore  : Hive Metastore Service (metadata only)
-#   - spark-thrift    : Spark Thrift Server (JDBC, YARN client)
+#   - spark-connect   : Spark Connect Server (gRPC, YARN client)
 #
 # Usage:
 #   docker compose up -d --build
-#   docker compose logs -f spark-thrift
+#   docker compose logs -f spark-connect
 #   docker compose down -v   (destroy volumes)
 # ============================================================
 
@@ -80,7 +80,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 512M
+          memory: 768M
     networks:
       - hive-net
     restart: unless-stopped
@@ -92,8 +92,8 @@ services:
     build:
       context: ./hadoop
       args:
-        HADOOP_VERSION: ${HADOOP_VERSION:-3.3.6}
-    image: hadoop-base:${HADOOP_VERSION:-3.3.6}
+        HADOOP_VERSION: ${HADOOP_VERSION:-3.4.1}
+    image: hadoop-base:${HADOOP_VERSION:-3.4.1}
     container_name: namenode
     hostname: namenode
     domainname: hive-net
@@ -129,7 +129,7 @@ services:
   # HDFS DataNode + YARN NodeManager
   # --------------------------------------------------------
   datanode:
-    image: hadoop-base:${HADOOP_VERSION:-3.3.6}
+    image: hadoop-base:${HADOOP_VERSION:-3.4.1}
     container_name: datanode
     hostname: datanode
     domainname: hive-net
@@ -157,7 +157,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 3g
+          memory: 5g
     networks:
       - hive-net
     restart: unless-stopped
@@ -209,21 +209,21 @@ services:
     restart: unless-stopped
 
   # --------------------------------------------------------
-  # Spark Thrift Server (YARN client mode)
+  # Spark Connect Server (YARN client mode)
   # --------------------------------------------------------
-  spark-thrift:
+  spark-connect:
     build:
       context: ./spark
       args:
         SPARK_VERSION: ${SPARK_VERSION:-3.5.3}
-    image: spark:${SPARK_VERSION:-3.5.3}
-    container_name: spark-thrift
-    hostname: spark-thrift
+    image: spark-hive-custom:${SPARK_VERSION:-3.5.3}
+    container_name: spark-connect
+    hostname: spark-connect
     domainname: hive-net
     environment:
       TZ: ${TZ:-Asia/Shanghai}
     ports:
-      - "127.0.0.1:10000:10000" # Thrift Server (JDBC)
+      - "127.0.0.1:15002:15002" # Spark Connect Server (gRPC)
       - "127.0.0.1:4040:4040"   # Spark Application UI
     volumes:
       - keytabs:/etc/security/keytabs:ro
@@ -236,7 +236,7 @@ services:
       hive-metastore:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "PORT_HEX=$$(printf '%X' 10000); grep -q \":$${PORT_HEX} \" /proc/net/tcp6 2>/dev/null || grep -q \":$${PORT_HEX} \" /proc/net/tcp 2>/dev/null"]
+      test: ["CMD-SHELL", "PORT_HEX=$$(printf '%X' 15002); grep -q \":$${PORT_HEX} \" /proc/net/tcp6 2>/dev/null || grep -q \":$${PORT_HEX} \" /proc/net/tcp 2>/dev/null"]
       interval: 15s
       timeout: 10s
       retries: 20
@@ -244,7 +244,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 2G
+          memory: 2560M
     networks:
       - hive-net
     restart: unless-stopped

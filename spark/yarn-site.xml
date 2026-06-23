@@ -30,14 +30,14 @@
         <value>namenode.hive-net:8088</value>
     </property>
 
-    <!-- NodeManager resources -->
+    <!-- NodeManager resources (kept in sync with hadoop/yarn-site.xml) -->
     <property>
         <name>yarn.nodemanager.resource.memory-mb</name>
-        <value>2048</value>
+        <value>4096</value>
     </property>
     <property>
         <name>yarn.nodemanager.resource.cpu-vcores</name>
-        <value>2</value>
+        <value>4</value>
     </property>
 
     <!-- Log aggregation -->
@@ -83,7 +83,7 @@
     </property>
     <property>
         <name>yarn.scheduler.maximum-allocation-mb</name>
-        <value>2048</value>
+        <value>4096</value>
     </property>
 
     <!-- Disable virtual/physical memory checks in Docker.

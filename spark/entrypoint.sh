@@ -1,11 +1,13 @@
 #!/bin/bash
 # ============================================================
-# Spark Entrypoint — Thrift Server (YARN client mode)
+# Spark Entrypoint — Connect Server (YARN client mode)
 #
-# Runs the Spark Thrift Server as a YARN client application.
-# The Driver runs in this container; Executors are launched
-# by YARN NodeManagers, which handle Kerberos delegation
-# token distribution automatically.
+# Runs the Spark Connect Server (gRPC, port 15002) as a YARN
+# client application. The Driver runs in this container;
+# Executors are launched by YARN NodeManagers, which handle
+# Kerberos delegation token distribution automatically.
+#
+# Clients connect with: spark.remote("sc://<host>:15002")
 # ============================================================
 set -e
 
@@ -47,7 +49,7 @@ wait_for_kdc() {
 }
 
 echo "============================================================"
-echo " Spark Thrift Server Startup (YARN + Kerberos)"
+echo " Spark Connect Server Startup (YARN + Kerberos)"
 echo "============================================================"
 
 # Wait for KDC and obtain Kerberos ticket
@@ -62,14 +64,19 @@ wait_for_port namenode 9000 "HDFS NameNode" 60
 wait_for_port namenode 8032 "YARN ResourceManager" 60
 wait_for_port hive-metastore 9083 "Hive Metastore" 60
 
-# Start Spark Thrift Server (foreground, keeps container alive)
-# YARN mode: Executors get delegation tokens automatically
-echo "[spark] Starting Spark Thrift Server on port 10000 (YARN + Kerberos) ..."
+# Start Spark Connect Server (foreground, keeps container alive)
+# YARN mode: Executors get delegation tokens automatically.
+# --packages resolves from the Ivy cache baked into the image at build time
+# (see Dockerfile), so this does not need to reach Maven at startup.
+SPARK_CONNECT_PACKAGE="${SPARK_CONNECT_PACKAGE:-org.apache.spark:spark-connect_2.12:${SPARK_VERSION}}"
+echo "[spark] Starting Spark Connect Server on port 15002 (YARN + Kerberos) ..."
 exec ${SPARK_HOME}/bin/spark-submit \
-    --class org.apache.spark.sql.hive.thriftserver.HiveThriftServer2 \
-    --name "Spark Thrift Server" \
+    --class org.apache.spark.sql.connect.service.SparkConnectServer \
+    --name "Spark Connect Server" \
+    --packages "${SPARK_CONNECT_PACKAGE}" \
     --master yarn \
     --deploy-mode client \
     --principal spark/${FQDN}@EXAMPLE.COM \
     --keytab /etc/security/keytabs/spark.keytab \
+    --conf spark.connect.grpc.binding.port=15002 \
     spark-internal

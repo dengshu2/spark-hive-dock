@@ -4,10 +4,10 @@
 # Metadata-only service — no execution engine, no HiveServer2
 # Uses BuildKit cache for download layer (avoids re-download)
 # ============================================================
-ARG HADOOP_VERSION=3.3.6
+ARG HADOOP_VERSION=3.4.1
 FROM hadoop-base:${HADOOP_VERSION}
 
-LABEL description="Hive 3.1.3 Metastore on Hadoop 3.3.6"
+LABEL description="Hive 3.1.3 Metastore on Hadoop 3.4.1"
 
 # Build arguments
 ARG HIVE_VERSION=3.1.3

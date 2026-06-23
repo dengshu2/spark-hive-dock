@@ -35,14 +35,17 @@
         <value>namenode.hive-net:8088</value>
     </property>
 
-    <!-- NodeManager resources -->
+    <!-- NodeManager resources.
+         Sized so the persistent Spark Connect app can scale to 3 executors
+         (512m each → ~1G/container) plus its AM, under dynamic allocation:
+         AM(~1G) + 3 × executor(~1G) = 4096MB, 1 + 3 = 4 vCores. -->
     <property>
         <name>yarn.nodemanager.resource.memory-mb</name>
-        <value>2048</value>
+        <value>4096</value>
     </property>
     <property>
         <name>yarn.nodemanager.resource.cpu-vcores</name>
-        <value>2</value>
+        <value>4</value>
     </property>
 
     <!-- Log aggregation -->
@@ -88,7 +91,7 @@
     </property>
     <property>
         <name>yarn.scheduler.maximum-allocation-mb</name>
-        <value>2048</value>
+        <value>4096</value>
     </property>
 
     <!-- Disable virtual/physical memory checks in Docker.

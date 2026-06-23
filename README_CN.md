@@ -2,13 +2,13 @@
 
 [English](README.md) | 中文
 
-基于 Docker 的 Spark SQL 集群，集成 Hive Metastore 和 Hadoop HDFS，使用 **MIT Kerberos** 实现安全认证，**YARN** 提供资源管理和 Delegation Token 分发。MySQL 作为 Metastore 后端存储。面向开发和测试环境 — **请勿用于生产**。
+基于 Docker 的 Spark SQL 集群，集成 Hive Metastore 和 Hadoop HDFS，使用 **MIT Kerberos** 实现安全认证，**YARN** 提供资源管理和 Delegation Token 分发。程序化访问由 **Spark Connect Server**（gRPC，Spark 3.5+）通过 `sc://` 提供。MySQL 作为 Metastore 后端存储。面向开发和测试环境 — **请勿用于生产**。
 
 ## 版本矩阵
 
 | 组件 | 版本 | JDK |
 |------|------|-----|
-| Hadoop | 3.3.6 | OpenJDK 8 (Temurin) |
+| Hadoop | 3.4.1 | OpenJDK 8 (Temurin) |
 | Hive Metastore | 3.1.3 | OpenJDK 8 (Temurin) |
 | Spark | 3.5.3 | OpenJDK 11 (Temurin) |
 | MySQL | 8.0 | — |
@@ -35,21 +35,21 @@
                      │  └────────────┬─────────────┘        │
                      │               │                      │
   ┌──────────────┐   │  ┌────────────▼─────────────┐       │
-  │   Beeline    │──►│  │  Spark Master             │       │
-  │  (GSSAPI)    │   │  │  :7077 (RPC)              │       │
-  └──────────────┘   │  │  :10000 (Thrift / JDBC)   │       │
-                     │  │  :18080 (Web UI)          │       │
+  │ Spark Connect│──►│  │  Spark Connect Server     │       │
+  │   客户端     │   │  │  :15002 (gRPC)            │       │
+  │  (sc://...)  │   │  │  :4040  (Spark UI)        │       │
+  └──────────────┘   │  │  YARN client 模式         │       │
                      │  └────────────┬─────────────┘       │
-                     │               │                      │
+                     │               │ 提交应用             │
                      │  ┌────────────▼─────────────┐       │
-                     │  │    Spark Worker           │       │
+                     │  │  YARN Executors (NodeMgr) │       │
                      │  └──────────────────────────┘       │
                      └──────────────────────────────────────┘
 ```
 
 **认证流程**: KDC 分发 principals 和 keytabs → 所有服务通过 GSSAPI/SASL 认证
 
-**数据流**: Beeline → Spark Thrift Server (JDBC :10000) → Hive Metastore (元数据) → HDFS (数据存储)
+**数据流**: Spark Connect 客户端 (`sc://:15002`) → Spark Connect Server (YARN client) → Hive Metastore (元数据) → HDFS (数据存储)
 
 ## 快速开始
 
@@ -67,8 +67,8 @@ make status
 # 4. 验证 Kerberos 票据
 make kinit
 
-# 5. 连接 Beeline (Kerberos GSSAPI)
-bash scripts/beeline-connect.sh
+# 5. 打开交互式 spark-sql shell (本地模式, Kerberos)
+bash scripts/spark-sql-shell.sh
 
 # 6. (可选) 加载测试数据
 bash scripts/init-test-data.sh
@@ -76,6 +76,24 @@ bash scripts/init-test-data.sh
 # 7. 运行冒烟测试
 make test
 ```
+
+### 连接 Spark Connect 客户端
+
+集群在 `127.0.0.1:15002`（gRPC）暴露 **Spark Connect Server**。在宿主机上：
+
+```bash
+pip install "pyspark[connect]==3.5.3"
+```
+
+```python
+from pyspark.sql import SparkSession
+
+spark = SparkSession.builder.remote("sc://localhost:15002").getOrCreate()
+spark.sql("SHOW DATABASES").show()
+spark.sql("SELECT * FROM sample_db.employees").show()
+```
+
+> Connect Server 持有 Kerberos 身份（`spark` principal）并代表客户端向 YARN 提交作业 —— 客户端**不需要**自己的 keytab。gRPC 端口仅绑定到 `127.0.0.1`，请勿对外暴露（Spark Connect 3.5 没有内置强认证）。
 
 ## Make 命令
 
@@ -92,7 +110,7 @@ make test
 | `make logs` | 跟踪所有服务日志 |
 | `make restart` | 重启所有服务 |
 
-> 为什么需要 Makefile？`hive-metastore` 镜像构建依赖 `hadoop-base` 镜像 (`FROM hadoop-base:3.3.6`)，但 `docker compose build` 不保证构建顺序。Makefile 确保先构建 hadoop-base 再构建 hive-metastore。
+> 为什么需要 Makefile？`hive-metastore` 镜像构建依赖 `hadoop-base` 镜像 (`FROM hadoop-base:3.4.1`)，但 `docker compose build` 不保证构建顺序。Makefile 确保先构建 hadoop-base 再构建 hive-metastore。
 
 ## Kerberos 配置
 
@@ -112,7 +130,7 @@ make test
 | Hive MetaStore | `hive/hive-metastore.hive-net@EXAMPLE.COM` |
 | YARN RM (namenode) | `yarn/namenode.hive-net@EXAMPLE.COM` |
 | YARN NM (datanode) | `yarn/datanode.hive-net@EXAMPLE.COM` |
-| Spark Thrift | `spark/spark-thrift.hive-net@EXAMPLE.COM` |
+| Spark Connect | `spark/spark-connect.hive-net@EXAMPLE.COM` |
 | HTTP (SPNEGO) | `HTTP/<service>.hive-net@EXAMPLE.COM` |
 
 > 所有服务使用 Docker FQDN（`.hive-net` 后缀）以实现 Kerberos `_HOST` principal 展开的一致性。`docker-compose.yml` 为每个服务设置了 `domainname: hive-net`。
@@ -147,7 +165,7 @@ spark-hive-dock/
 │   ├── krb5.conf             # Kerberos 客户端配置
 │   └── init-kdc.sh           # Principal 创建 + keytab 导出
 ├── hadoop/
-│   ├── Dockerfile            # Hadoop 3.3.6 + YARN + Spark Shuffle + Kerberos
+│   ├── Dockerfile            # Hadoop 3.4.1 + YARN + Spark Shuffle + Kerberos
 │   ├── core-site.xml         # HDFS + Kerberos 认证
 │   ├── hdfs-site.xml         # HDFS 副本数、存储、Kerberos principals
 │   ├── yarn-site.xml         # YARN 资源管理 + Kerberos
@@ -158,18 +176,18 @@ spark-hive-dock/
 │   ├── hive-site.xml         # Metastore SASL/GSSAPI 认证
 │   └── entrypoint-metastore.sh  # Kerberos 化启动流程
 ├── spark/
-│   ├── Dockerfile            # Spark 3.5.3 + Thrift Server + krb5-user
+│   ├── Dockerfile            # Spark 3.5.3 + Connect Server + krb5-user
 │   ├── core-site.xml         # HDFS + Kerberos + 代理用户配置
 │   ├── hdfs-site.xml         # HDFS Kerberos principals (与 hadoop/ 同步)
 │   ├── yarn-site.xml         # YARN 客户端配置 (与 hadoop/ 同步)
 │   ├── mapred-site.xml       # MapReduce 配置 (与 hadoop/ 同步)
 │   ├── hive-site.xml         # MetaStore SASL 客户端配置
-│   ├── spark-defaults.conf   # YARN 模式 + Kerberos delegation token
-│   └── entrypoint.sh         # Thrift Server (YARN client) + kinit
+│   ├── spark-defaults.conf   # YARN 模式 + Kerberos + Connect gRPC 端口
+│   └── entrypoint.sh         # Connect Server (YARN client) + kinit
 ├── mysql/
 │   └── init.sql              # Metastore 数据库字符集配置
 └── scripts/
-    ├── beeline-connect.sh    # 快速连接 Beeline (Kerberos)
+    ├── spark-sql-shell.sh    # 交互式 spark-sql shell (Kerberos)
     └── init-test-data.sh     # 示例数据库和表 (Kerberos 版)
 ```
 
@@ -242,7 +260,7 @@ make kinit
 - `ignore.secure.ports.for.testing=true` 允许非特权 HDFS 端口
 - `hive.server2.enable.doAs=false` — 不进行用户级模拟
 - 代理用户限制完全开放 (`hadoop.proxyuser.*.hosts=*`)
-- Spark Thrift Server 使用 YARN client 模式，Executor 由 NodeManager 管理
+- Spark Connect Server 使用 YARN client 模式，启用动态分配（0–3 executor），由 NodeManager 管理
 
 **请勿将此配置用于生产环境。**
 

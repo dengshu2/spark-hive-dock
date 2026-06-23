@@ -8,10 +8,10 @@
 FROM eclipse-temurin:8-jdk AS hadoop-base
 
 LABEL maintainer="hive-docker"
-LABEL description="Hadoop 3.3.6 base image with YARN + Kerberos"
+LABEL description="Hadoop 3.4.1 base image with YARN + Kerberos"
 
 # Build arguments
-ARG HADOOP_VERSION=3.3.6
+ARG HADOOP_VERSION=3.4.1
 ARG HADOOP_URL=https://dlcdn.apache.org/hadoop/common/hadoop-${HADOOP_VERSION}/hadoop-${HADOOP_VERSION}.tar.gz
 
 # Environment variables
