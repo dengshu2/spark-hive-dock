@@ -22,6 +22,14 @@ ARG MAVEN_MIRROR=https://mirrors.huaweicloud.com/repository/maven/
 # archive.apache.org caps bandwidth at ~40KB/s; huaweicloud mirror is ~140x faster
 ARG SPARK_URL=https://mirrors.huaweicloud.com/apache/spark/spark-${SPARK_VERSION}/spark-${SPARK_VERSION}-bin-hadoop3.tgz
 ARG MYSQL_CONNECTOR_URL=https://repo1.maven.org/maven2/mysql/mysql-connector-java/${MYSQL_CONNECTOR_VERSION}/mysql-connector-java-${MYSQL_CONNECTOR_VERSION}.jar
+# ClickHouse JDBC driver (shaded "-all" jar) — lets Spark write to ClickHouse via
+# JDBC (`com.clickhouse.jdbc.ClickHouseDriver`). Used by spark-connect-cli `sync`.
+# Pin 0.4.6: it is a *complete* uber jar (bundles clickhouse-client +
+# clickhouse-http-client + the client SPI). The 0.6.x "-all" classifier ships
+# WITHOUT com.clickhouse.client.ClickHouseClient, so the driver's static
+# initializer fails with "Could not initialize class ...ClickHouseDriver".
+ARG CLICKHOUSE_JDBC_VERSION=0.4.6
+ARG CLICKHOUSE_JDBC_URL=https://repo1.maven.org/maven2/com/clickhouse/clickhouse-jdbc/${CLICKHOUSE_JDBC_VERSION}/clickhouse-jdbc-${CLICKHOUSE_JDBC_VERSION}-all.jar
 
 ENV SPARK_VERSION=${SPARK_VERSION}
 ENV SPARK_HOME=/opt/spark
@@ -62,6 +70,14 @@ RUN echo "SELECT 1;" | ${SPARK_HOME}/bin/spark-sql \
         --conf spark.sql.catalogImplementation=in-memory \
         --conf spark.ui.enabled=false \
     && echo "[build] Spark Connect package resolved into Ivy cache"
+
+# Add ClickHouse JDBC driver (for Spark -> ClickHouse writes via `scq sync`).
+# Placed after the Ivy resolve so it doesn't invalidate that expensive layer.
+RUN --mount=type=cache,target=/tmp/downloads \
+    if [ ! -f /tmp/downloads/clickhouse-jdbc-${CLICKHOUSE_JDBC_VERSION}-all.jar ]; then \
+        curl -fSL "${CLICKHOUSE_JDBC_URL}" -o /tmp/downloads/clickhouse-jdbc-${CLICKHOUSE_JDBC_VERSION}-all.jar; \
+    fi \
+    && cp /tmp/downloads/clickhouse-jdbc-${CLICKHOUSE_JDBC_VERSION}-all.jar ${SPARK_HOME}/jars/
 
 # Hadoop + YARN configuration (HDFS and YARN access)
 RUN mkdir -p ${HADOOP_CONF_DIR}
