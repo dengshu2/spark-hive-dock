@@ -68,15 +68,15 @@ SASL 模式 + 非特权端口 + 不设置 `HDFS_DATANODE_SECURE_USER`。
 
 ---
 
-## 🟡 遗留问题 3：`spark/` 下的 Hadoop 配置文件是手动静态副本
+## ✅ 遗留问题 3（已解决）：`spark/` 下的 Hadoop 配置文件是手动静态副本
 
-### 现状
-`spark/{hdfs-site,yarn-site,mapred-site}.xml` 均是从 `hadoop/` 手动复制的静态副本。修改 Hadoop 侧配置后 Spark 侧不会自动同步，容易造成两侧配置漂移。
+### 现状（历史）
+`spark/{core,hdfs,yarn,mapred}-site.xml` 均是从 `hadoop/` 手动复制的静态副本。修改 Hadoop 侧配置后 Spark 侧不会自动同步，曾造成漂移（`hadoop/yarn-site.xml` 加了 `yarn.resourcemanager.bind-host=0.0.0.0` 但 `spark/` 侧漏了）。
 
-### 修复建议
-- 方案 A: 在 Makefile 的 `build` target 中添加自动同步步骤
-- 方案 B: 在 `spark/Dockerfile` 中使用多阶段构建，从 hadoop image 复制
-- 方案 C: 使用 Docker Compose 的 `configs` 或共享 volume 挂载同一份文件
+### 修复（2026-06-26，采用方案 A）
+`hadoop/` 定为唯一权威源。Makefile 新增 `sync-conf` target，在 `build` 前用 `cp hadoop/* → spark/*` 同步 `SHARED_CONF`（core/hdfs/yarn/mapred-site.xml），把 `spark/` 这四个文件钉成**生成物**——只改 `hadoop/` 侧、重新 build 即可，勿手改 `spark/`。`spark/hive-site.xml` 为 Spark 专属、不在同步范围。已执行一次 `make sync-conf`，四个文件现与 `hadoop/` 字节一致。
+
+> 未采用方案 B（多阶段构建）/ 方案 C（共享 volume）：方案 A 改动最小、零运行期依赖，且 `spark/` 仍保留在 git 中作为快照与漂移告警信号。
 
 ---
 

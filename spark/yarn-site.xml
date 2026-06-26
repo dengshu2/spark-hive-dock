@@ -13,6 +13,11 @@
         <name>yarn.resourcemanager.hostname</name>
         <value>namenode.hive-net</value>
     </property>
+    <!-- Bind all RM ports to 0.0.0.0 so localhost healthchecks (nc -z localhost 8032) work -->
+    <property>
+        <name>yarn.resourcemanager.bind-host</name>
+        <value>0.0.0.0</value>
+    </property>
     <property>
         <name>yarn.resourcemanager.address</name>
         <value>namenode.hive-net:8032</value>
@@ -30,7 +35,10 @@
         <value>namenode.hive-net:8088</value>
     </property>
 
-    <!-- NodeManager resources (kept in sync with hadoop/yarn-site.xml) -->
+    <!-- NodeManager resources.
+         Sized so the persistent Spark Connect app can scale to 3 executors
+         (512m each → ~1G/container) plus its AM, under dynamic allocation:
+         AM(~1G) + 3 × executor(~1G) = 4096MB, 1 + 3 = 4 vCores. -->
     <property>
         <name>yarn.nodemanager.resource.memory-mb</name>
         <value>4096</value>
