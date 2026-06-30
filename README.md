@@ -2,15 +2,15 @@
 
 English | [中文](README_CN.md)
 
-Dockerized Spark SQL cluster with Hive Metastore on Hadoop HDFS, secured with **MIT Kerberos** authentication and **YARN** resource management with delegation token distribution. Programmatic access is provided by the **Spark Connect Server** (gRPC, Spark 3.5+) over `sc://`. MySQL serves as the Metastore backend. Designed for development and testing — **not for production use**.
+Dockerized Spark SQL cluster with Hive Metastore on Hadoop HDFS, secured with **MIT Kerberos** authentication and **YARN** resource management with delegation token distribution. Programmatic access is provided by the **Spark Connect Server** (gRPC, Spark 4.x) over `sc://`. MySQL serves as the Metastore backend. Designed for development and testing — **not for production use**.
 
 ## Version Matrix
 
 | Component | Version | JDK |
 |-----------|---------|-----|
-| Hadoop | 3.4.1 | OpenJDK 8 (Temurin) |
-| Hive Metastore | 3.1.3 | OpenJDK 8 (Temurin) |
-| Spark | 3.5.3 | OpenJDK 11 (Temurin) |
+| Hadoop | 3.5.0 | OpenJDK 17 (Temurin) |
+| Hive Metastore | 4.1.0 | OpenJDK 17 (Temurin) |
+| Spark | 4.1.2 | OpenJDK 17 (Temurin) |
 | MySQL | 8.0 | — |
 | MIT Kerberos (KDC) | Debian bookworm | — |
 
@@ -82,7 +82,7 @@ make test
 The cluster exposes the **Spark Connect Server** on `127.0.0.1:15002` (gRPC). From the host:
 
 ```bash
-pip install "pyspark[connect]==3.5.3"
+pip install "pyspark[connect]==4.1.2"
 ```
 
 ```python
@@ -110,7 +110,7 @@ spark.sql("SELECT * FROM sample_db.employees").show()
 | `make logs` | Follow all service logs |
 | `make restart` | Restart all services |
 
-> Why a Makefile? The `hive-metastore` image depends on `hadoop-base` (`FROM hadoop-base:3.4.1`), but `docker compose build` doesn't guarantee build ordering. The Makefile ensures hadoop-base is built before hive-metastore.
+> Why a Makefile? The `hive-metastore` image depends on `hadoop-base` (`FROM hadoop-base:3.5.0`), but `docker compose build` doesn't guarantee build ordering. The Makefile ensures hadoop-base is built before hive-metastore.
 
 ## Kerberos Configuration
 
@@ -165,18 +165,18 @@ spark-hive-dock/
 │   ├── krb5.conf             # Kerberos client configuration
 │   └── init-kdc.sh           # Principal provisioning + keytab export
 ├── hadoop/
-│   ├── Dockerfile            # Hadoop 3.4.1 + YARN + Spark Shuffle + Kerberos
+│   ├── Dockerfile            # Hadoop 3.5.0 + YARN + Kerberos (JDK 17)
 │   ├── core-site.xml         # HDFS + Kerberos authentication
 │   ├── hdfs-site.xml         # HDFS replication, storage, Kerberos principals
 │   ├── yarn-site.xml         # YARN resource management + Kerberos
 │   ├── mapred-site.xml       # MapReduce framework config
 │   └── entrypoint.sh         # Multi-role startup (NN+RM / DN+NM) with kinit
 ├── hive/
-│   ├── Dockerfile            # Hive 3.1.3 Metastore + krb5-user
+│   ├── Dockerfile            # Hive 4.1.0 Metastore + krb5-user (JDK 17)
 │   ├── hive-site.xml         # Metastore SASL/GSSAPI authentication
 │   └── entrypoint-metastore.sh  # Kerberized startup sequence
 ├── spark/
-│   ├── Dockerfile            # Spark 3.5.3 + Connect Server + krb5-user
+│   ├── Dockerfile            # Spark 4.1.2 + Connect Server (bundled) + krb5-user (JDK 17)
 │   ├── core-site.xml         # HDFS + Kerberos + proxy user config
 │   ├── hdfs-site.xml         # HDFS Kerberos principals (synced from hadoop/)
 │   ├── yarn-site.xml         # YARN client config (synced from hadoop/)

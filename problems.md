@@ -1,8 +1,8 @@
 # Kerberos 集成问题清单
 
 > **项目**: `spark-hive-dock` — Spark + Hive Metastore + HDFS Docker 集群 + MIT Kerberos + YARN
-> **日期**: 2026-03-26
-> **当前状态**: ✅ Spark on YARN 模式稳定运行，全部启动问题已解决
+> **日期**: 2026-03-26（2026-06-30 升级至 Spark 4.1.2 / Hive 4.1.0 / Hadoop 3.5.0 全栈 JDK17）
+> **当前状态**: ✅ Spark on YARN 模式稳定运行；✅ 4.x 全栈升级完成并端到端验证（见文末「版本升级」章节）
 
 ---
 
@@ -89,6 +89,52 @@ SASL 模式 + 非特权端口 + 不设置 `HDFS_DATANODE_SECURE_USER`。
 1. 需要为每个 beeline 用户创建 Kerberos principal 并分发 keytab
 2. 或使用 Kerberos Proxy User 机制：确保 `spark` 用户可以 impersonate 其他用户
 3. 对应 `core-site.xml` 中已有 `hadoop.proxyuser.spark.{hosts,groups}=*` 配置，但可能需要额外的 MetaStore 端配置
+
+---
+
+## 版本升级（2026-06-30）：Spark 4.1.2 + Hive 4.1.0 + Hadoop 3.5.0（全栈 JDK 17）
+
+> 从 Spark 3.5.3 / Hive 3.1.3 / Hadoop 3.4.1（JDK 8/11 混合）升级到全栈 JDK 17。
+> 通过 `down -v` 全新重建（测试数据已授权清空），端到端验证通过。
+
+### 升级矩阵
+| 组件 | 旧 | 新 | 关键变化 |
+|---|---|---|---|
+| Hadoop | 3.4.1 (JDK8) | 3.5.0 (JDK17) | 3.5 起服务端强制 JDK 17 |
+| Hive MS | 3.1.3 (JDK8) | 4.1.0 (JDK17) | 4.1 起强制 JDK 17 |
+| Spark | 3.5.3 (JDK11, Scala2.12) | 4.1.2 (JDK17, Scala2.13) | Connect **内置**，不再 `--packages`/Ivy |
+| mysql 驱动 | mysql-connector-java 8.0.28 | mysql-connector-j 9.1.0 | 旧坐标已废弃 |
+| ClickHouse JDBC | 0.4.6 | 0.4.6（保留） | uber-jar JDK8 字节码在 JDK17 运行正常；升级 0.8.x 为后续 TODO |
+
+### ✅ 升级问题 1：JDK 17 + Hadoop 守护进程 InaccessibleObjectException
+**根因**: JDK 17 模块系统封装 `java.base` 内部包，Hadoop UGI/NIO/security 反射访问被拒。
+**修复**: `hadoop/Dockerfile` 设 `ENV HADOOP_OPTS` 注入一组 `--add-opens`/`--add-exports`（java.lang/io/net/nio/util/sun.nio.ch/sun.security.* 等）。Hadoop 3.5 的 hadoop-env 是 append 模式，安全。Spark 侧由 launcher 的 `JavaModuleOptions` 自动注入，无需手加。
+
+### ✅ 升级问题 2（核心坑）：Spark 内置 Hive 2.3.10 客户端无法连 Hive 4.1.0 HMS
+**现象**: `org.apache.thrift.TApplicationException: Invalid method name: 'get_table'`。
+**根因**: Spark 4.1 内置 metastore 客户端是 Hive **2.3.10**，调用 Thrift 方法 `get_table`；Hive 4.x 已移除该方法（改用 `get_table_req`）。旧客户端打新 HMS 直接失败。
+**修复**: 把 Hive 4.1.0 的客户端 jar 烤进 Spark 镜像，用隔离类加载器加载——
+- `spark/Dockerfile`: 全局 ARG + `FROM ${HIVE_METASTORE_IMAGE} AS hive-libs`，`COPY --from=hive-libs /opt/hive/lib /opt/hive-metastore-libs`（复用已构建的 hive 镜像，零二次下载；BuildKit 不支持 `COPY --from=${VAR}`，必须用具名 stage）。
+- `spark/spark-defaults.conf`: `spark.sql.hive.metastore.version=4.1.0` + `jars=path` + `jars.path=file:///opt/hive-metastore-libs/*.jar`（无运行期 Maven/Ivy 下载）。Spark 4.x 经 SPARK-45265 支持 4.x metastore 版本。
+- 构建顺序：spark 依赖 hive 镜像，Makefile 改为先 hive-metastore 再 spark-connect（不再并行）。
+
+### ✅ 升级问题 3：Spark 4.x ANSI SQL 默认开启
+**影响**: 溢出/除零/非法 cast 由返回 NULL 变为抛错，可能改变 `scq` 既有查询结果。
+**处理**: `spark-defaults.conf` 暂设 `spark.sql.ansi.enabled=false` 保持 3.5 语义，待 scq 工作负载验证后再切回默认。
+
+### 镜像与下载源
+- Hadoop URL 由 dlcdn 改 huaweicloud（dlcdn 只留各线最新版，会 404）。
+- 环境只能访问 huaweicloud 镜像，**不能直连 pypi.org**：pip 需 `-i https://mirrors.huaweicloud.com/repository/pypi/simple/`。
+- PyPI 无 `pyspark-client`/`pyspark==4.1.2`（直连失败误导），实际用 `pyspark[connect]==4.1.2` 经 huaweicloud 镜像可装。
+
+### 验证（全部通过）
+- 6 服务全 healthy，0 僵尸进程（tini）。
+- Kerberos delegation token 在 JDK17 下正常签发（HDFS_DELEGATION_TOKEN）。
+- `make test`（local 模式）：Hive 4.1.0 HMS 建库建表插查删，Kerberos SASL 通。
+- Spark Connect gRPC 端到端（pyspark 4.1.2 客户端 → sc://15002 → YARN executor → HDFS → HMS）：SHOW DATABASES / INSERT / 聚合 / range filter 全部正确。
+
+### 客户端侧后续（未做，本次只升 spark-hive-dock 服务端）
+`scq`（spark-connect-cli）的 pyspark 3.5.8 与 4.1.2 服务端协议不匹配，需升到 4.1.x 并重建 mcp-chat。详见 memory [[spark-connect-cli]]。
 
 ---
 

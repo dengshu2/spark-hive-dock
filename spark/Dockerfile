@@ -1,33 +1,44 @@
 # syntax=docker/dockerfile:1
 # ============================================================
-# Spark 3.5.3 Image
-# - JDK 11 (Spark 3.5 requirement)
+# Spark 4.1.2 Image
+# - JDK 17 (Spark 4.x requirement)
+# - Scala 2.13 (Spark 4.x dropped Scala 2.12)
 # - Hadoop + YARN client configs for HDFS/YARN access
 # - Hive Metastore integration via Spark SQL
-# - Spark Connect Server (gRPC) — Spark 3.5+ feature
+# - Spark Connect Server (gRPC) — BUNDLED in the 4.x distribution
+#   (no more --packages / Ivy pre-resolution needed; see entrypoint.sh)
 # - Kerberos client for authenticated access
 # - Uses BuildKit cache for download layer (avoids re-download)
 # ============================================================
-FROM eclipse-temurin:11-jre-jammy
 
-LABEL description="Spark 3.5.3 Connect Server with YARN + Kerberos"
+# Hive image to source the 4.1.0 metastore client jars from. Declared in global
+# scope (before the first FROM) so it can parameterize the hive-libs stage —
+# BuildKit does not allow variable expansion directly in `COPY --from=${VAR}`.
+ARG HIVE_VERSION=4.1.0
+ARG HIVE_METASTORE_IMAGE=hive-metastore:${HIVE_VERSION}
+FROM ${HIVE_METASTORE_IMAGE} AS hive-libs
 
-ARG SPARK_VERSION=3.5.3
-ARG MYSQL_CONNECTOR_VERSION=8.0.28
-# Spark Connect server module + its transitive deps (gRPC/protobuf/guava).
-# Not bundled in the binary distribution's jars/, so it is resolved via Ivy.
-ARG SPARK_CONNECT_PACKAGE=org.apache.spark:spark-connect_2.12:${SPARK_VERSION}
-# Maven mirror for fast Ivy resolution (proxies Maven Central)
-ARG MAVEN_MIRROR=https://mirrors.huaweicloud.com/repository/maven/
-# archive.apache.org caps bandwidth at ~40KB/s; huaweicloud mirror is ~140x faster
+FROM eclipse-temurin:17-jre-jammy
+
+LABEL description="Spark 4.1.2 Connect Server with YARN + Kerberos (JDK 17, Scala 2.13)"
+
+ARG SPARK_VERSION=4.1.2
+# mysql-connector-java was renamed to mysql-connector-j (coordinate
+# com.mysql:mysql-connector-j) from 8.1 onward; 8.0.x is EOL/deprecated.
+ARG MYSQL_CONNECTOR_VERSION=9.1.0
+# archive.apache.org caps bandwidth at ~40KB/s; huaweicloud mirror is ~140x faster.
+# Spark 4.x bin-hadoop3 tarballs are Scala 2.13 (the only Scala build in 4.x).
 ARG SPARK_URL=https://mirrors.huaweicloud.com/apache/spark/spark-${SPARK_VERSION}/spark-${SPARK_VERSION}-bin-hadoop3.tgz
-ARG MYSQL_CONNECTOR_URL=https://repo1.maven.org/maven2/mysql/mysql-connector-java/${MYSQL_CONNECTOR_VERSION}/mysql-connector-java-${MYSQL_CONNECTOR_VERSION}.jar
+ARG MYSQL_CONNECTOR_URL=https://repo1.maven.org/maven2/com/mysql/mysql-connector-j/${MYSQL_CONNECTOR_VERSION}/mysql-connector-j-${MYSQL_CONNECTOR_VERSION}.jar
 # ClickHouse JDBC driver (shaded "-all" jar) — lets Spark write to ClickHouse via
 # JDBC (`com.clickhouse.jdbc.ClickHouseDriver`). Used by spark-connect-cli `sync`.
 # Pin 0.4.6: it is a *complete* uber jar (bundles clickhouse-client +
 # clickhouse-http-client + the client SPI). The 0.6.x "-all" classifier ships
 # WITHOUT com.clickhouse.client.ClickHouseClient, so the driver's static
 # initializer fails with "Could not initialize class ...ClickHouseDriver".
+# The jar is JDK-8 bytecode and runs fine on the JDK 17 runtime; re-evaluating a
+# move to clickhouse-jdbc 0.8.x / the official ClickHouse Spark connector is a
+# tracked follow-up.
 ARG CLICKHOUSE_JDBC_VERSION=0.4.6
 ARG CLICKHOUSE_JDBC_URL=https://repo1.maven.org/maven2/com/clickhouse/clickhouse-jdbc/${CLICKHOUSE_JDBC_VERSION}/clickhouse-jdbc-${CLICKHOUSE_JDBC_VERSION}-all.jar
 
@@ -52,32 +63,25 @@ RUN --mount=type=cache,target=/tmp/downloads \
 
 # Add MySQL JDBC driver (Spark needs it for Hive Metastore access)
 RUN --mount=type=cache,target=/tmp/downloads \
-    if [ ! -f /tmp/downloads/mysql-connector-java-${MYSQL_CONNECTOR_VERSION}.jar ]; then \
-        curl -fSL "${MYSQL_CONNECTOR_URL}" -o /tmp/downloads/mysql-connector-java-${MYSQL_CONNECTOR_VERSION}.jar; \
+    if [ ! -f /tmp/downloads/mysql-connector-j-${MYSQL_CONNECTOR_VERSION}.jar ]; then \
+        curl -fSL "${MYSQL_CONNECTOR_URL}" -o /tmp/downloads/mysql-connector-j-${MYSQL_CONNECTOR_VERSION}.jar; \
     fi \
-    && cp /tmp/downloads/mysql-connector-java-${MYSQL_CONNECTOR_VERSION}.jar ${SPARK_HOME}/jars/
-
-# Pre-resolve the Spark Connect server package (+ transitive gRPC/protobuf
-# deps) into the image's Ivy cache (/root/.ivy2), so the runtime entrypoint's
-# --packages flag is an offline cache hit and the container never needs to
-# reach Maven at startup. A throwaway local[1] "SELECT 1" triggers resolution
-# without requiring HDFS/metastore/YARN. Runs before any Hive/Hadoop config is
-# copied in, so it uses an in-memory catalog (no Kerberos/metastore needed).
-RUN echo "SELECT 1;" | ${SPARK_HOME}/bin/spark-sql \
-        --packages ${SPARK_CONNECT_PACKAGE} \
-        --repositories ${MAVEN_MIRROR} \
-        --master "local[1]" \
-        --conf spark.sql.catalogImplementation=in-memory \
-        --conf spark.ui.enabled=false \
-    && echo "[build] Spark Connect package resolved into Ivy cache"
+    && cp /tmp/downloads/mysql-connector-j-${MYSQL_CONNECTOR_VERSION}.jar ${SPARK_HOME}/jars/
 
 # Add ClickHouse JDBC driver (for Spark -> ClickHouse writes via `scq sync`).
-# Placed after the Ivy resolve so it doesn't invalidate that expensive layer.
 RUN --mount=type=cache,target=/tmp/downloads \
     if [ ! -f /tmp/downloads/clickhouse-jdbc-${CLICKHOUSE_JDBC_VERSION}-all.jar ]; then \
         curl -fSL "${CLICKHOUSE_JDBC_URL}" -o /tmp/downloads/clickhouse-jdbc-${CLICKHOUSE_JDBC_VERSION}-all.jar; \
     fi \
     && cp /tmp/downloads/clickhouse-jdbc-${CLICKHOUSE_JDBC_VERSION}-all.jar ${SPARK_HOME}/jars/
+
+# Bake Hive 4.1.0 metastore client jars so Spark's IsolatedClientLoader can talk
+# to the Hive 4.1.0 HMS. The builtin Hive 2.3.10 client uses the Thrift method
+# get_table, which Hive 4.x removed (it uses get_table_req) — so the builtin
+# client fails with "Invalid method name: 'get_table'". Copied from the
+# already-built hive image (no second Hive download); wired up via
+# spark.sql.hive.metastore.jars=path in spark-defaults.conf.
+COPY --from=hive-libs /opt/hive/lib /opt/hive-metastore-libs
 
 # Hadoop + YARN configuration (HDFS and YARN access)
 RUN mkdir -p ${HADOOP_CONF_DIR}

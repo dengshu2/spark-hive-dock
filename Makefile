@@ -33,15 +33,19 @@ sync-conf:
 # -- Build -----------------------------------------------
 # Step 0: sync shared Hadoop conf into spark/ (prevents config drift)
 # Step 1: kdc (no dependencies)
-# Step 2: hadoop-base (no dependencies, includes YARN + Spark shuffle)
-# Step 3: hive-metastore (FROM hadoop-base) + spark (independent)
+# Step 2: hadoop-base (no dependencies, includes YARN)
+# Step 3: hive-metastore (FROM hadoop-base)
+# Step 4: spark (COPY --from hive-metastore for the 4.1.0 client jars, so it
+#         must be built AFTER hive-metastore — not in parallel)
 build: sync-conf
-	@echo "=== [1/3] Building KDC ==="
+	@echo "=== [1/4] Building KDC ==="
 	docker compose build kdc
-	@echo "=== [2/3] Building hadoop-base (HDFS + YARN) ==="
+	@echo "=== [2/4] Building hadoop-base (HDFS + YARN) ==="
 	docker compose build namenode
-	@echo "=== [3/3] Building hive-metastore + spark (parallel) ==="
-	docker compose build hive-metastore spark-connect
+	@echo "=== [3/4] Building hive-metastore ==="
+	docker compose build hive-metastore
+	@echo "=== [4/4] Building spark (uses hive-metastore jars) ==="
+	docker compose build spark-connect
 
 # -- Lifecycle -------------------------------------------
 up: build

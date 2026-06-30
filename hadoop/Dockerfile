@@ -1,18 +1,20 @@
 # syntax=docker/dockerfile:1
 # ============================================================
 # Hadoop Base Image
-# Based on Eclipse Temurin JDK 8 (production-grade OpenJDK)
+# Based on Eclipse Temurin JDK 17 (Hadoop 3.5+ requires JDK 17 server-side)
 # Supports: NameNode + ResourceManager, DataNode + NodeManager
 # Uses BuildKit cache for download layer (avoids re-download)
 # ============================================================
-FROM eclipse-temurin:8-jdk AS hadoop-base
+FROM eclipse-temurin:17-jdk AS hadoop-base
 
 LABEL maintainer="hive-docker"
-LABEL description="Hadoop 3.4.1 base image with YARN + Kerberos"
+LABEL description="Hadoop 3.5.0 base image with YARN + Kerberos (JDK 17)"
 
 # Build arguments
-ARG HADOOP_VERSION=3.4.1
-ARG HADOOP_URL=https://dlcdn.apache.org/hadoop/common/hadoop-${HADOOP_VERSION}/hadoop-${HADOOP_VERSION}.tar.gz
+ARG HADOOP_VERSION=3.5.0
+# huaweicloud mirror: stable (keeps archived releases, unlike dlcdn which only
+# serves the current release of each line) and ~140x faster than archive.apache.org.
+ARG HADOOP_URL=https://mirrors.huaweicloud.com/apache/hadoop/common/hadoop-${HADOOP_VERSION}/hadoop-${HADOOP_VERSION}.tar.gz
 
 # Environment variables
 ENV HADOOP_VERSION=${HADOOP_VERSION}
@@ -25,6 +27,23 @@ ENV HDFS_DATANODE_USER=root
 ENV HDFS_SECONDARYNAMENODE_USER=root
 ENV YARN_RESOURCEMANAGER_USER=root
 ENV YARN_NODEMANAGER_USER=root
+# JDK 17 module access: Hadoop daemons reflect into java.base internals (Kerberos
+# UGI, NIO, security). Hadoop 3.5's hadoop-env appends to HADOOP_OPTS, so this is
+# a safe base set. Without these the daemons throw InaccessibleObjectException on
+# JDK 17.
+ENV HADOOP_OPTS="--add-opens java.base/java.lang=ALL-UNNAMED \
+--add-opens java.base/java.lang.reflect=ALL-UNNAMED \
+--add-opens java.base/java.io=ALL-UNNAMED \
+--add-opens java.base/java.net=ALL-UNNAMED \
+--add-opens java.base/java.nio=ALL-UNNAMED \
+--add-opens java.base/java.util=ALL-UNNAMED \
+--add-opens java.base/java.util.concurrent=ALL-UNNAMED \
+--add-opens java.base/java.util.zip=ALL-UNNAMED \
+--add-opens java.base/sun.nio.ch=ALL-UNNAMED \
+--add-opens java.base/sun.security.action=ALL-UNNAMED \
+--add-opens java.base/sun.security.util=ALL-UNNAMED \
+--add-exports java.base/sun.net.dns=ALL-UNNAMED \
+--add-exports java.base/sun.net.util=ALL-UNNAMED"
 # NOTE: HDFS_DATANODE_SECURE_USER is intentionally NOT set.
 # With dfs.data.transfer.protection=authentication (SASL), the DataNode
 # uses unprivileged ports and does not need the secure user mechanism.

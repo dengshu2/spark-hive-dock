@@ -8,9 +8,9 @@
 
 | 组件 | 版本 | JDK |
 |------|------|-----|
-| Hadoop | 3.4.1 | OpenJDK 8 (Temurin) |
-| Hive Metastore | 3.1.3 | OpenJDK 8 (Temurin) |
-| Spark | 3.5.3 | OpenJDK 11 (Temurin) |
+| Hadoop | 3.5.0 | OpenJDK 17 (Temurin) |
+| Hive Metastore | 4.1.0 | OpenJDK 17 (Temurin) |
+| Spark | 4.1.2 | OpenJDK 17 (Temurin) |
 | MySQL | 8.0 | — |
 | MIT Kerberos (KDC) | Debian bookworm | — |
 
@@ -82,7 +82,7 @@ make test
 集群在 `127.0.0.1:15002`（gRPC）暴露 **Spark Connect Server**。在宿主机上：
 
 ```bash
-pip install "pyspark[connect]==3.5.3"
+pip install "pyspark[connect]==4.1.2"
 ```
 
 ```python
@@ -110,7 +110,7 @@ spark.sql("SELECT * FROM sample_db.employees").show()
 | `make logs` | 跟踪所有服务日志 |
 | `make restart` | 重启所有服务 |
 
-> 为什么需要 Makefile？`hive-metastore` 镜像构建依赖 `hadoop-base` 镜像 (`FROM hadoop-base:3.4.1`)，但 `docker compose build` 不保证构建顺序。Makefile 确保先构建 hadoop-base 再构建 hive-metastore。
+> 为什么需要 Makefile？`hive-metastore` 镜像构建依赖 `hadoop-base` 镜像 (`FROM hadoop-base:3.5.0`)，但 `docker compose build` 不保证构建顺序。Makefile 确保先构建 hadoop-base 再构建 hive-metastore。
 
 ## Kerberos 配置
 
@@ -165,18 +165,18 @@ spark-hive-dock/
 │   ├── krb5.conf             # Kerberos 客户端配置
 │   └── init-kdc.sh           # Principal 创建 + keytab 导出
 ├── hadoop/
-│   ├── Dockerfile            # Hadoop 3.4.1 + YARN + Spark Shuffle + Kerberos
+│   ├── Dockerfile            # Hadoop 3.5.0 + YARN + Kerberos (JDK 17)
 │   ├── core-site.xml         # HDFS + Kerberos 认证
 │   ├── hdfs-site.xml         # HDFS 副本数、存储、Kerberos principals
 │   ├── yarn-site.xml         # YARN 资源管理 + Kerberos
 │   ├── mapred-site.xml       # MapReduce 框架配置
 │   └── entrypoint.sh         # 多角色启动 (NN+RM / DN+NM) + kinit
 ├── hive/
-│   ├── Dockerfile            # Hive 3.1.3 Metastore + krb5-user
+│   ├── Dockerfile            # Hive 4.1.0 Metastore + krb5-user (JDK 17)
 │   ├── hive-site.xml         # Metastore SASL/GSSAPI 认证
 │   └── entrypoint-metastore.sh  # Kerberos 化启动流程
 ├── spark/
-│   ├── Dockerfile            # Spark 3.5.3 + Connect Server + krb5-user
+│   ├── Dockerfile            # Spark 4.1.2 + Connect Server (bundled) + krb5-user (JDK 17)
 │   ├── core-site.xml         # HDFS + Kerberos + 代理用户配置
 │   ├── hdfs-site.xml         # HDFS Kerberos principals (与 hadoop/ 同步)
 │   ├── yarn-site.xml         # YARN 客户端配置 (与 hadoop/ 同步)
