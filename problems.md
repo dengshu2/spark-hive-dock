@@ -120,7 +120,7 @@ SASL 模式 + 非特权端口 + 不设置 `HDFS_DATANODE_SECURE_USER`。
 
 ### ✅ 升级问题 3：Spark 4.x ANSI SQL 默认开启
 **影响**: 溢出/除零/非法 cast 由返回 NULL 变为抛错，可能改变 `scq` 既有查询结果。
-**处理**: `spark-defaults.conf` 暂设 `spark.sql.ansi.enabled=false` 保持 3.5 语义，待 scq 工作负载验证后再切回默认。
+**处理**: 升级期间先设 `spark.sql.ansi.enabled=false` 保持 3.5 语义，避免把 SQL 语义变更和基础设施升级耦合在一起。**2026-06-30 验证后已切回 Spark 4 默认 `true`**：实测良构查询行为不变，仅坏操作 fail-loud（`DIVIDE_BY_ZERO` / `CAST_INVALID_INPUT`，如 `CAST('abc' AS INT)` / `ARITHMETIC_OVERFLOW`）。需要宽松语义的查询可用 `try_cast`/`try_divide`，或按会话 `SET spark.sql.ansi.enabled=false`（已验证 per-session 仍可覆盖）。
 
 ### 镜像与下载源
 - Hadoop URL 由 dlcdn 改 huaweicloud（dlcdn 只留各线最新版，会 404）。
