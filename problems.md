@@ -164,6 +164,25 @@ time travel / schema evolution / hidden partitioning / row-level MERGE·DELETE�
 
 ---
 
+## ClickHouse JDBC 驱动升级（2026-06-30）：0.4.6 → 0.7.2（sync 在新栈上修复）
+
+> 升级后实测 `scq sync`（Hive→ClickHouse）失败，定位到老驱动在 JDK17/Spark4.1 上挂了。
+
+### 现象与定位
+- 旧 0.4.6：JDBC 批量写报 `BatchUpdateException: Unknown error 1002`（catch-all，无可用嵌套 cause）。
+- **不是端点/网络问题**：`chsql`（另一 CH 客户端）打同一个公网端点 `clickhouse.dengshu.ovh:443`（Cloudflare 前置 HTTPS，非内网 host；集群从 datanode/spark-connect 可达）正常返回。是 **clickhouse-jdbc 0.4.6 在 JDK17/Spark4.1 上的问题**。
+
+### 修复
+`spark/Dockerfile` 把 `CLICKHOUSE_JDBC_VERSION` 0.4.6 → **0.7.2**（`-all` 经校验是完整 uber jar：含 `com.clickhouse.client.ClickHouseClient` SPI 类 + 其 `META-INF/services` 注册 + driver；ClickHouse 官方 Spark 文档用的就是 0.7.2）。换驱动后写入直接拿到结构化 CH 响应（`Code: 60 UNKNOWN_TABLE`），证明驱动通了。⚠️ 勿用 0.6.x `-all`（缺 SPI）。
+
+### sync 正确用法（已验证）
+Spark 的通用 JDBC dialect **不会**可靠地给你 auto-create 一个像样的 MergeTree（`--order-by` 的 createTableOptions 不一定生效；sync.py docstring 本就警告这点）。正确路径 = **先在 CH 建好目标表，再 `scq sync ... append`**。实测：预建 `MergeTree ORDER BY id` 后 sync 5 行 → CH 校验 `count=5, sum(amt)=17.5` ✓。
+
+### 客户端版本
+[mcp-chat](mcp-chat) 已重建为 `spark-connect-cli==0.3.0`（pyspark 4.1.2），sync 经其异步 job 子系统跑通。详见 memory [[spark-connect-cli]]。
+
+---
+
 ## 当前配置架构
 
 ```

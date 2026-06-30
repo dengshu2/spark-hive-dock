@@ -30,16 +30,18 @@ ARG MYSQL_CONNECTOR_VERSION=9.1.0
 # Spark 4.x bin-hadoop3 tarballs are Scala 2.13 (the only Scala build in 4.x).
 ARG SPARK_URL=https://mirrors.huaweicloud.com/apache/spark/spark-${SPARK_VERSION}/spark-${SPARK_VERSION}-bin-hadoop3.tgz
 ARG MYSQL_CONNECTOR_URL=https://repo1.maven.org/maven2/com/mysql/mysql-connector-j/${MYSQL_CONNECTOR_VERSION}/mysql-connector-j-${MYSQL_CONNECTOR_VERSION}.jar
-# ClickHouse JDBC driver (shaded "-all" jar) — lets Spark write to ClickHouse via
-# JDBC (`com.clickhouse.jdbc.ClickHouseDriver`). Used by spark-connect-cli `sync`.
-# Pin 0.4.6: it is a *complete* uber jar (bundles clickhouse-client +
-# clickhouse-http-client + the client SPI). The 0.6.x "-all" classifier ships
-# WITHOUT com.clickhouse.client.ClickHouseClient, so the driver's static
-# initializer fails with "Could not initialize class ...ClickHouseDriver".
-# The jar is JDK-8 bytecode and runs fine on the JDK 17 runtime; re-evaluating a
-# move to clickhouse-jdbc 0.8.x / the official ClickHouse Spark connector is a
-# tracked follow-up.
-ARG CLICKHOUSE_JDBC_VERSION=0.4.6
+# ClickHouse JDBC driver (shaded "all" uber jar) — lets Spark write to ClickHouse
+# via JDBC (`com.clickhouse.jdbc.ClickHouseDriver`). Used by spark-connect-cli
+# `sync`.
+# 0.7.2 "all": verified to be a *complete* uber jar (bundles clickhouse-client +
+# clickhouse-http + the com.clickhouse.client.ClickHouseClient SPI and its
+# META-INF/services registration), so the driver's static initializer succeeds.
+# We moved off 0.4.6: that old client failed batch writes on the JDK 17 / Spark
+# 4.1 stack with "BatchUpdateException: Unknown error 1002" (the endpoint itself
+# was fine — chsql reached it). 0.7.2 is the version the official ClickHouse
+# Spark docs use. NOTE: avoid the 0.6.x "-all" classifier — it ships WITHOUT the
+# ClickHouseClient SPI and the driver fails to initialize.
+ARG CLICKHOUSE_JDBC_VERSION=0.7.2
 ARG CLICKHOUSE_JDBC_URL=https://repo1.maven.org/maven2/com/clickhouse/clickhouse-jdbc/${CLICKHOUSE_JDBC_VERSION}/clickhouse-jdbc-${CLICKHOUSE_JDBC_VERSION}-all.jar
 # Apache Iceberg Spark runtime — table format support (HiveCatalog backed by the
 # Hive 4.1.0 HMS). 1.11.0 is the first line with a Spark 4.1 / Scala 2.13 build.
