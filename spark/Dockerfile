@@ -41,6 +41,17 @@ ARG MYSQL_CONNECTOR_URL=https://repo1.maven.org/maven2/com/mysql/mysql-connector
 # tracked follow-up.
 ARG CLICKHOUSE_JDBC_VERSION=0.4.6
 ARG CLICKHOUSE_JDBC_URL=https://repo1.maven.org/maven2/com/clickhouse/clickhouse-jdbc/${CLICKHOUSE_JDBC_VERSION}/clickhouse-jdbc-${CLICKHOUSE_JDBC_VERSION}-all.jar
+# Apache Iceberg Spark runtime — table format support (HiveCatalog backed by the
+# Hive 4.1.0 HMS). 1.11.0 is the first line with a Spark 4.1 / Scala 2.13 build.
+# NOTE: Iceberg's HiveCatalog instantiates its own HiveMetaStoreClient from the
+# main classpath (Spark's bundled Hive 2.3.10) and does NOT honor
+# spark.sql.hive.metastore.jars — so against the Hive 4.1.0 HMS it would hit
+# "Invalid method name: 'get_table'". The fix is in spark-defaults.conf:
+# spark.driver.extraClassPath prepends the baked Hive 4.1.0 metastore client jars
+# (/opt/hive-metastore-libs) ahead of the 2.3.10 ones. Verified not to disturb
+# Spark's own spark_catalog (which uses the isolated 4.1.0 client loader).
+ARG ICEBERG_SPARK_RUNTIME_VERSION=1.11.0
+ARG ICEBERG_SPARK_RUNTIME_URL=https://repo1.maven.org/maven2/org/apache/iceberg/iceberg-spark-runtime-4.1_2.13/${ICEBERG_SPARK_RUNTIME_VERSION}/iceberg-spark-runtime-4.1_2.13-${ICEBERG_SPARK_RUNTIME_VERSION}.jar
 
 ENV SPARK_VERSION=${SPARK_VERSION}
 ENV SPARK_HOME=/opt/spark
@@ -74,6 +85,13 @@ RUN --mount=type=cache,target=/tmp/downloads \
         curl -fSL "${CLICKHOUSE_JDBC_URL}" -o /tmp/downloads/clickhouse-jdbc-${CLICKHOUSE_JDBC_VERSION}-all.jar; \
     fi \
     && cp /tmp/downloads/clickhouse-jdbc-${CLICKHOUSE_JDBC_VERSION}-all.jar ${SPARK_HOME}/jars/
+
+# Add the Iceberg Spark runtime (table-format support; see ARG comment above).
+RUN --mount=type=cache,target=/tmp/downloads \
+    if [ ! -f /tmp/downloads/iceberg-spark-runtime-4.1_2.13-${ICEBERG_SPARK_RUNTIME_VERSION}.jar ]; then \
+        curl -fSL "${ICEBERG_SPARK_RUNTIME_URL}" -o /tmp/downloads/iceberg-spark-runtime-4.1_2.13-${ICEBERG_SPARK_RUNTIME_VERSION}.jar; \
+    fi \
+    && cp /tmp/downloads/iceberg-spark-runtime-4.1_2.13-${ICEBERG_SPARK_RUNTIME_VERSION}.jar ${SPARK_HOME}/jars/
 
 # Bake Hive 4.1.0 metastore client jars so Spark's IsolatedClientLoader can talk
 # to the Hive 4.1.0 HMS. The builtin Hive 2.3.10 client uses the Thrift method

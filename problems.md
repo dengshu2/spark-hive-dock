@@ -138,6 +138,32 @@ SASL 模式 + 非特权端口 + 不设置 `HDFS_DATANODE_SECURE_USER`。
 
 ---
 
+## Iceberg 表格式验证（2026-06-30）：基础读写往返 + HiveCatalog
+
+> 目标：在新栈（Spark 4.1.2 / Hive 4.1.0 HMS）上验证 Iceberg 基础建表/插入/查询，catalog 用 HiveCatalog（复用现有 HMS）。**结论：✅ 通，但需绕过一个 Iceberg↔Hive4 的已知坑。**
+
+### ⚠️ 坑：Iceberg HiveCatalog 不认 `spark.sql.hive.metastore.jars`，撞同样的 `get_table`
+**现象**: `CREATE TABLE ... USING iceberg` 报 `TApplicationException: Invalid method name: 'get_table'`。
+**根因**: 与升级问题 2 同源，但**修复方式不同**。Spark 自己的 `spark_catalog` 用 IsolatedClientLoader 读 `metastore.jars=path`（4.1.0），所以没事；但 Iceberg 的 `HiveCatalog` 是直接 `new HiveMetaStoreClient()`，从**主 classpath** 取类——主 classpath 上是 Spark 自带的 Hive **2.3.10**（`$SPARK_HOME/jars/hive-metastore-2.3.10.jar`），它调已被 Hive 4.x 删除的 `get_table`。Iceberg **不读** `spark.sql.hive.metastore.jars`。这是上游已知问题（apache/iceberg #13572 / #13628）。
+**修复**: `spark-defaults.conf` 用 `spark.driver.extraClassPath` 把已烤进镜像的 Hive 4.1.0 metastore client jar 预置到主 classpath 之前——
+```
+spark.driver.extraClassPath /opt/hive-metastore-libs/hive-metastore-4.1.0.jar:/opt/hive-metastore-libs/hive-standalone-metastore-common-4.1.0.jar
+```
+这样 Iceberg 解析到 4.1.0 的 HiveMetaStoreClient（走 `get_table_req`）。**已验证不影响 `spark_catalog`**（它走隔离 4.1.0 loader，与主 classpath 无关；常规 Hive 表 + scq 查询路径回归通过）。
+
+### 镜像改动
+- `spark/Dockerfile`: 下载 `iceberg-spark-runtime-4.1_2.13:1.11.0`（首个支持 Spark 4.1/Scala2.13 的 Iceberg 线）进 `$SPARK_HOME/jars/`（随 YARN 分发到 executor）。
+- `spark-defaults.conf`: 注册 `iceberg` catalog（`SparkCatalog` + `type=hive` + HMS uri/warehouse）+ `IcebergSparkSessionExtensions` + 上面的 extraClassPath 预置。
+
+### 验证（通过）
+- 本地模式：`spark_catalog` 常规表（2 行/和 30）与 `iceberg` 表（建库建表插查删）同会话并存，均正确。
+- Spark Connect gRPC 端到端：`iceberg.icedb.orders` 建表/插 3 行/聚合（count=3, sumqty=16）/`ORDER BY` 读出/读 `.snapshots` 元数据表（1 个快照，证明确为 Iceberg 格式）/删表删库；常规 `spark_catalog` 路径无回归。
+
+### 未覆盖（本次只验证「基础读写往返」）
+time travel / schema evolution / hidden partitioning / row-level MERGE·DELETE（MoR）均未测；复杂操作可能需要预置更多 4.1.0 client 类（当前只预置了 2 个 jar，够基础读写）。Hive 4 自带的 Iceberg **REST Catalog**（`hive-standalone-metastore-rest-catalog-4.1.0.jar`）是另一条可选路径，可绕开 Thrift 老客户端问题，未采用。
+
+---
+
 ## 当前配置架构
 
 ```
