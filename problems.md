@@ -1,8 +1,8 @@
 # Kerberos 集成问题清单
 
 > **项目**: `spark-hive-dock` — Spark + Hive Metastore + HDFS Docker 集群 + MIT Kerberos + YARN
-> **日期**: 2026-03-26
-> **当前状态**: ✅ Spark on YARN 模式稳定运行，全部启动问题已解决
+> **日期**: 2026-03-26（2026-06-30 升级至 Spark 4.1.2 / Hive 4.1.0 / Hadoop 3.5.0 全栈 JDK17）
+> **当前状态**: ✅ Spark on YARN 模式稳定运行；✅ 4.x 全栈升级完成并端到端验证（见文末「版本升级」章节）
 
 ---
 
@@ -68,15 +68,15 @@ SASL 模式 + 非特权端口 + 不设置 `HDFS_DATANODE_SECURE_USER`。
 
 ---
 
-## 🟡 遗留问题 3：`spark/` 下的 Hadoop 配置文件是手动静态副本
+## ✅ 遗留问题 3（已解决）：`spark/` 下的 Hadoop 配置文件是手动静态副本
 
-### 现状
-`spark/{hdfs-site,yarn-site,mapred-site}.xml` 均是从 `hadoop/` 手动复制的静态副本。修改 Hadoop 侧配置后 Spark 侧不会自动同步，容易造成两侧配置漂移。
+### 现状（历史）
+`spark/{core,hdfs,yarn,mapred}-site.xml` 均是从 `hadoop/` 手动复制的静态副本。修改 Hadoop 侧配置后 Spark 侧不会自动同步，曾造成漂移（`hadoop/yarn-site.xml` 加了 `yarn.resourcemanager.bind-host=0.0.0.0` 但 `spark/` 侧漏了）。
 
-### 修复建议
-- 方案 A: 在 Makefile 的 `build` target 中添加自动同步步骤
-- 方案 B: 在 `spark/Dockerfile` 中使用多阶段构建，从 hadoop image 复制
-- 方案 C: 使用 Docker Compose 的 `configs` 或共享 volume 挂载同一份文件
+### 修复（2026-06-26，采用方案 A）
+`hadoop/` 定为唯一权威源。Makefile 新增 `sync-conf` target，在 `build` 前用 `cp hadoop/* → spark/*` 同步 `SHARED_CONF`（core/hdfs/yarn/mapred-site.xml），把 `spark/` 这四个文件钉成**生成物**——只改 `hadoop/` 侧、重新 build 即可，勿手改 `spark/`。`spark/hive-site.xml` 为 Spark 专属、不在同步范围。已执行一次 `make sync-conf`，四个文件现与 `hadoop/` 字节一致。
+
+> 未采用方案 B（多阶段构建）/ 方案 C（共享 volume）：方案 A 改动最小、零运行期依赖，且 `spark/` 仍保留在 git 中作为快照与漂移告警信号。
 
 ---
 
@@ -89,6 +89,97 @@ SASL 模式 + 非特权端口 + 不设置 `HDFS_DATANODE_SECURE_USER`。
 1. 需要为每个 beeline 用户创建 Kerberos principal 并分发 keytab
 2. 或使用 Kerberos Proxy User 机制：确保 `spark` 用户可以 impersonate 其他用户
 3. 对应 `core-site.xml` 中已有 `hadoop.proxyuser.spark.{hosts,groups}=*` 配置，但可能需要额外的 MetaStore 端配置
+
+---
+
+## 版本升级（2026-06-30）：Spark 4.1.2 + Hive 4.1.0 + Hadoop 3.5.0（全栈 JDK 17）
+
+> 从 Spark 3.5.3 / Hive 3.1.3 / Hadoop 3.4.1（JDK 8/11 混合）升级到全栈 JDK 17。
+> 通过 `down -v` 全新重建（测试数据已授权清空），端到端验证通过。
+
+### 升级矩阵
+| 组件 | 旧 | 新 | 关键变化 |
+|---|---|---|---|
+| Hadoop | 3.4.1 (JDK8) | 3.5.0 (JDK17) | 3.5 起服务端强制 JDK 17 |
+| Hive MS | 3.1.3 (JDK8) | 4.1.0 (JDK17) | 4.1 起强制 JDK 17 |
+| Spark | 3.5.3 (JDK11, Scala2.12) | 4.1.2 (JDK17, Scala2.13) | Connect **内置**，不再 `--packages`/Ivy |
+| mysql 驱动 | mysql-connector-java 8.0.28 | mysql-connector-j 9.1.0 | 旧坐标已废弃 |
+| ClickHouse JDBC | 0.4.6 | 0.4.6（保留） | uber-jar JDK8 字节码在 JDK17 运行正常；升级 0.8.x 为后续 TODO |
+
+### ✅ 升级问题 1：JDK 17 + Hadoop 守护进程 InaccessibleObjectException
+**根因**: JDK 17 模块系统封装 `java.base` 内部包，Hadoop UGI/NIO/security 反射访问被拒。
+**修复**: `hadoop/Dockerfile` 设 `ENV HADOOP_OPTS` 注入一组 `--add-opens`/`--add-exports`（java.lang/io/net/nio/util/sun.nio.ch/sun.security.* 等）。Hadoop 3.5 的 hadoop-env 是 append 模式，安全。Spark 侧由 launcher 的 `JavaModuleOptions` 自动注入，无需手加。
+
+### ✅ 升级问题 2（核心坑）：Spark 内置 Hive 2.3.10 客户端无法连 Hive 4.1.0 HMS
+**现象**: `org.apache.thrift.TApplicationException: Invalid method name: 'get_table'`。
+**根因**: Spark 4.1 内置 metastore 客户端是 Hive **2.3.10**，调用 Thrift 方法 `get_table`；Hive 4.x 已移除该方法（改用 `get_table_req`）。旧客户端打新 HMS 直接失败。
+**修复**: 把 Hive 4.1.0 的客户端 jar 烤进 Spark 镜像，用隔离类加载器加载——
+- `spark/Dockerfile`: 全局 ARG + `FROM ${HIVE_METASTORE_IMAGE} AS hive-libs`，`COPY --from=hive-libs /opt/hive/lib /opt/hive-metastore-libs`（复用已构建的 hive 镜像，零二次下载；BuildKit 不支持 `COPY --from=${VAR}`，必须用具名 stage）。
+- `spark/spark-defaults.conf`: `spark.sql.hive.metastore.version=4.1.0` + `jars=path` + `jars.path=file:///opt/hive-metastore-libs/*.jar`（无运行期 Maven/Ivy 下载）。Spark 4.x 经 SPARK-45265 支持 4.x metastore 版本。
+- 构建顺序：spark 依赖 hive 镜像，Makefile 改为先 hive-metastore 再 spark-connect（不再并行）。
+
+### ✅ 升级问题 3：Spark 4.x ANSI SQL 默认开启
+**影响**: 溢出/除零/非法 cast 由返回 NULL 变为抛错，可能改变 `scq` 既有查询结果。
+**处理**: `spark-defaults.conf` 暂设 `spark.sql.ansi.enabled=false` 保持 3.5 语义，待 scq 工作负载验证后再切回默认。
+
+### 镜像与下载源
+- Hadoop URL 由 dlcdn 改 huaweicloud（dlcdn 只留各线最新版，会 404）。
+- 环境只能访问 huaweicloud 镜像，**不能直连 pypi.org**：pip 需 `-i https://mirrors.huaweicloud.com/repository/pypi/simple/`。
+- PyPI 无 `pyspark-client`/`pyspark==4.1.2`（直连失败误导），实际用 `pyspark[connect]==4.1.2` 经 huaweicloud 镜像可装。
+
+### 验证（全部通过）
+- 6 服务全 healthy，0 僵尸进程（tini）。
+- Kerberos delegation token 在 JDK17 下正常签发（HDFS_DELEGATION_TOKEN）。
+- `make test`（local 模式）：Hive 4.1.0 HMS 建库建表插查删，Kerberos SASL 通。
+- Spark Connect gRPC 端到端（pyspark 4.1.2 客户端 → sc://15002 → YARN executor → HDFS → HMS）：SHOW DATABASES / INSERT / 聚合 / range filter 全部正确。
+
+### 客户端侧后续（未做，本次只升 spark-hive-dock 服务端）
+`scq`（spark-connect-cli）的 pyspark 3.5.8 与 4.1.2 服务端协议不匹配，需升到 4.1.x 并重建 mcp-chat。详见 memory [[spark-connect-cli]]。
+
+---
+
+## Iceberg 表格式验证（2026-06-30）：基础读写往返 + HiveCatalog
+
+> 目标：在新栈（Spark 4.1.2 / Hive 4.1.0 HMS）上验证 Iceberg 基础建表/插入/查询，catalog 用 HiveCatalog（复用现有 HMS）。**结论：✅ 通，但需绕过一个 Iceberg↔Hive4 的已知坑。**
+
+### ⚠️ 坑：Iceberg HiveCatalog 不认 `spark.sql.hive.metastore.jars`，撞同样的 `get_table`
+**现象**: `CREATE TABLE ... USING iceberg` 报 `TApplicationException: Invalid method name: 'get_table'`。
+**根因**: 与升级问题 2 同源，但**修复方式不同**。Spark 自己的 `spark_catalog` 用 IsolatedClientLoader 读 `metastore.jars=path`（4.1.0），所以没事；但 Iceberg 的 `HiveCatalog` 是直接 `new HiveMetaStoreClient()`，从**主 classpath** 取类——主 classpath 上是 Spark 自带的 Hive **2.3.10**（`$SPARK_HOME/jars/hive-metastore-2.3.10.jar`），它调已被 Hive 4.x 删除的 `get_table`。Iceberg **不读** `spark.sql.hive.metastore.jars`。这是上游已知问题（apache/iceberg #13572 / #13628）。
+**修复**: `spark-defaults.conf` 用 `spark.driver.extraClassPath` 把已烤进镜像的 Hive 4.1.0 metastore client jar 预置到主 classpath 之前——
+```
+spark.driver.extraClassPath /opt/hive-metastore-libs/hive-metastore-4.1.0.jar:/opt/hive-metastore-libs/hive-standalone-metastore-common-4.1.0.jar
+```
+这样 Iceberg 解析到 4.1.0 的 HiveMetaStoreClient（走 `get_table_req`）。**已验证不影响 `spark_catalog`**（它走隔离 4.1.0 loader，与主 classpath 无关；常规 Hive 表 + scq 查询路径回归通过）。
+
+### 镜像改动
+- `spark/Dockerfile`: 下载 `iceberg-spark-runtime-4.1_2.13:1.11.0`（首个支持 Spark 4.1/Scala2.13 的 Iceberg 线）进 `$SPARK_HOME/jars/`（随 YARN 分发到 executor）。
+- `spark-defaults.conf`: 注册 `iceberg` catalog（`SparkCatalog` + `type=hive` + HMS uri/warehouse）+ `IcebergSparkSessionExtensions` + 上面的 extraClassPath 预置。
+
+### 验证（通过）
+- 本地模式：`spark_catalog` 常规表（2 行/和 30）与 `iceberg` 表（建库建表插查删）同会话并存，均正确。
+- Spark Connect gRPC 端到端：`iceberg.icedb.orders` 建表/插 3 行/聚合（count=3, sumqty=16）/`ORDER BY` 读出/读 `.snapshots` 元数据表（1 个快照，证明确为 Iceberg 格式）/删表删库；常规 `spark_catalog` 路径无回归。
+
+### 未覆盖（本次只验证「基础读写往返」）
+time travel / schema evolution / hidden partitioning / row-level MERGE·DELETE（MoR）均未测；复杂操作可能需要预置更多 4.1.0 client 类（当前只预置了 2 个 jar，够基础读写）。Hive 4 自带的 Iceberg **REST Catalog**（`hive-standalone-metastore-rest-catalog-4.1.0.jar`）是另一条可选路径，可绕开 Thrift 老客户端问题，未采用。
+
+---
+
+## ClickHouse JDBC 驱动升级（2026-06-30）：0.4.6 → 0.7.2（sync 在新栈上修复）
+
+> 升级后实测 `scq sync`（Hive→ClickHouse）失败，定位到老驱动在 JDK17/Spark4.1 上挂了。
+
+### 现象与定位
+- 旧 0.4.6：JDBC 批量写报 `BatchUpdateException: Unknown error 1002`（catch-all，无可用嵌套 cause）。
+- **不是端点/网络问题**：`chsql`（另一 CH 客户端）打同一个公网端点 `clickhouse.dengshu.ovh:443`（Cloudflare 前置 HTTPS，非内网 host；集群从 datanode/spark-connect 可达）正常返回。是 **clickhouse-jdbc 0.4.6 在 JDK17/Spark4.1 上的问题**。
+
+### 修复
+`spark/Dockerfile` 把 `CLICKHOUSE_JDBC_VERSION` 0.4.6 → **0.7.2**（`-all` 经校验是完整 uber jar：含 `com.clickhouse.client.ClickHouseClient` SPI 类 + 其 `META-INF/services` 注册 + driver；ClickHouse 官方 Spark 文档用的就是 0.7.2）。换驱动后写入直接拿到结构化 CH 响应（`Code: 60 UNKNOWN_TABLE`），证明驱动通了。⚠️ 勿用 0.6.x `-all`（缺 SPI）。
+
+### sync 正确用法（已验证）
+Spark 的通用 JDBC dialect **不会**可靠地给你 auto-create 一个像样的 MergeTree（`--order-by` 的 createTableOptions 不一定生效；sync.py docstring 本就警告这点）。正确路径 = **先在 CH 建好目标表，再 `scq sync ... append`**。实测：预建 `MergeTree ORDER BY id` 后 sync 5 行 → CH 校验 `count=5, sum(amt)=17.5` ✓。
+
+### 客户端版本
+[mcp-chat](mcp-chat) 已重建为 `spark-connect-cli==0.3.0`（pyspark 4.1.2），sync 经其异步 job 子系统跑通。详见 memory [[spark-connect-cli]]。
 
 ---
 

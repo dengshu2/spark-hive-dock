@@ -13,19 +13,39 @@
 #   make status  — show service health status
 # ============================================================
 
-.PHONY: build up down clean test kinit logs status restart
+.PHONY: build up down clean test kinit logs status restart sync-conf
+
+# -- Config sync -----------------------------------------
+# hadoop/ is the single source of truth for the shared HDFS/YARN/MapReduce/core
+# configs. spark/ needs verbatim copies so the Spark Connect client agrees with
+# the cluster; without this they drift (e.g. RM bind-host added to hadoop/ but
+# not spark/). These spark/ files are GENERATED — edit hadoop/ and re-run build,
+# don't hand-edit spark/{core,hdfs,yarn,mapred}-site.xml. spark/hive-site.xml is
+# Spark-specific and intentionally NOT synced.
+SHARED_CONF := core-site.xml hdfs-site.xml yarn-site.xml mapred-site.xml
+
+sync-conf:
+	@echo "=== Syncing shared Hadoop conf: hadoop/ -> spark/ ==="
+	@for f in $(SHARED_CONF); do \
+		cp hadoop/$$f spark/$$f && echo "  synced $$f"; \
+	done
 
 # -- Build -----------------------------------------------
+# Step 0: sync shared Hadoop conf into spark/ (prevents config drift)
 # Step 1: kdc (no dependencies)
-# Step 2: hadoop-base (no dependencies, includes YARN + Spark shuffle)
-# Step 3: hive-metastore (FROM hadoop-base) + spark (independent)
-build:
-	@echo "=== [1/3] Building KDC ==="
+# Step 2: hadoop-base (no dependencies, includes YARN)
+# Step 3: hive-metastore (FROM hadoop-base)
+# Step 4: spark (COPY --from hive-metastore for the 4.1.0 client jars, so it
+#         must be built AFTER hive-metastore — not in parallel)
+build: sync-conf
+	@echo "=== [1/4] Building KDC ==="
 	docker compose build kdc
-	@echo "=== [2/3] Building hadoop-base (HDFS + YARN) ==="
+	@echo "=== [2/4] Building hadoop-base (HDFS + YARN) ==="
 	docker compose build namenode
-	@echo "=== [3/3] Building hive-metastore + spark (parallel) ==="
-	docker compose build hive-metastore spark-connect
+	@echo "=== [3/4] Building hive-metastore ==="
+	docker compose build hive-metastore
+	@echo "=== [4/4] Building spark (uses hive-metastore jars) ==="
+	docker compose build spark-connect
 
 # -- Lifecycle -------------------------------------------
 up: build

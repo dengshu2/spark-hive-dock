@@ -2,19 +2,22 @@
 # ============================================================
 # Hive Metastore Image
 # Metadata-only service — no execution engine, no HiveServer2
+# Hive 4.1 requires JDK 17 (inherited from hadoop-base:3.5.0)
 # Uses BuildKit cache for download layer (avoids re-download)
 # ============================================================
-ARG HADOOP_VERSION=3.4.1
+ARG HADOOP_VERSION=3.5.0
 FROM hadoop-base:${HADOOP_VERSION}
 
-LABEL description="Hive 3.1.3 Metastore on Hadoop 3.4.1"
+LABEL description="Hive 4.1.0 Metastore on Hadoop 3.5.0 (JDK 17)"
 
 # Build arguments
-ARG HIVE_VERSION=3.1.3
-ARG MYSQL_CONNECTOR_VERSION=8.0.28
+ARG HIVE_VERSION=4.1.0
+# mysql-connector-java was renamed to mysql-connector-j (coordinate
+# com.mysql:mysql-connector-j) from 8.1 onward; 8.0.x is EOL/deprecated.
+ARG MYSQL_CONNECTOR_VERSION=9.1.0
 # archive.apache.org caps bandwidth at ~40KB/s; huaweicloud mirror is ~140x faster
 ARG HIVE_URL=https://mirrors.huaweicloud.com/apache/hive/hive-${HIVE_VERSION}/apache-hive-${HIVE_VERSION}-bin.tar.gz
-ARG MYSQL_CONNECTOR_URL=https://repo1.maven.org/maven2/mysql/mysql-connector-java/${MYSQL_CONNECTOR_VERSION}/mysql-connector-java-${MYSQL_CONNECTOR_VERSION}.jar
+ARG MYSQL_CONNECTOR_URL=https://repo1.maven.org/maven2/com/mysql/mysql-connector-j/${MYSQL_CONNECTOR_VERSION}/mysql-connector-j-${MYSQL_CONNECTOR_VERSION}.jar
 
 # Environment variables
 ENV HIVE_VERSION=${HIVE_VERSION}
@@ -40,12 +43,16 @@ RUN --mount=type=cache,target=/tmp/downloads \
 # Resolve dependency conflicts
 # ============================================================
 
-# Guava conflict: Hive ships Guava 19, Hadoop ships 27.0+
+# Guava conflict: align Hive's Guava with Hadoop's (Hadoop is authoritative on
+# the classpath for HDFS access). Removes any Hive-shipped guava and copies in
+# Hadoop's, avoiding NoSuchMethodError across the Hive↔Hadoop boundary.
 RUN rm -f ${HIVE_HOME}/lib/guava-*.jar \
     && cp ${HADOOP_HOME}/share/hadoop/common/lib/guava-*.jar ${HIVE_HOME}/lib/
 
-# SLF4J conflict: remove duplicate binding from Hive
-RUN rm -f ${HIVE_HOME}/lib/log4j-slf4j-impl-*.jar
+# SLF4J conflict: remove Hive's log4j→slf4j binding so only one binding is on the
+# classpath. Glob covers both slf4j 1.x (log4j-slf4j-impl) and slf4j 2.x
+# (log4j-slf4j2-impl) artifact names.
+RUN rm -f ${HIVE_HOME}/lib/log4j-slf4j-impl-*.jar ${HIVE_HOME}/lib/log4j-slf4j2-impl-*.jar
 
 # Add MySQL JDBC driver
 RUN --mount=type=cache,target=/tmp/downloads \

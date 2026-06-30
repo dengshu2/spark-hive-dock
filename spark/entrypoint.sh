@@ -66,14 +66,15 @@ wait_for_port hive-metastore 9083 "Hive Metastore" 60
 
 # Start Spark Connect Server (foreground, keeps container alive)
 # YARN mode: Executors get delegation tokens automatically.
-# --packages resolves from the Ivy cache baked into the image at build time
-# (see Dockerfile), so this does not need to reach Maven at startup.
-SPARK_CONNECT_PACKAGE="${SPARK_CONNECT_PACKAGE:-org.apache.spark:spark-connect_2.12:${SPARK_VERSION}}"
+# Spark 4.x BUNDLES the Spark Connect server (spark-connect_2.13 jar ships in
+# $SPARK_HOME/jars), so no --packages / Ivy resolution is needed — the server
+# class is already on the classpath. JDK 17 module-opens are injected
+# automatically by Spark's launcher (JavaModuleOptions), so no manual
+# --add-opens is required here.
 echo "[spark] Starting Spark Connect Server on port 15002 (YARN + Kerberos) ..."
 exec ${SPARK_HOME}/bin/spark-submit \
     --class org.apache.spark.sql.connect.service.SparkConnectServer \
     --name "Spark Connect Server" \
-    --packages "${SPARK_CONNECT_PACKAGE}" \
     --master yarn \
     --deploy-mode client \
     --principal spark/${FQDN}@EXAMPLE.COM \
