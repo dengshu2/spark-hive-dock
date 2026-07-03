@@ -1,15 +1,36 @@
 #!/bin/bash
+# ============================================================
 # 新增 Hive 测试表：products / user_behavior / dim_category
+#
+# Runs via spark-sql in local mode (--master local[*]) inside the
+# spark-connect container: direct Hive Metastore access over Kerberos
+# SASL, no YARN app, no Connect client — same pattern as the other
+# init scripts. Run from the host.
+# ============================================================
 set -e
 
-SPARK_SUBMIT="/opt/spark/bin/spark-submit"
-SPARK_SQL="/opt/spark/bin/spark-sql"
+CONTAINER=spark-connect
+PRINCIPAL="spark/spark-connect.hive-net@EXAMPLE.COM"
 
 echo "======================================================"
 echo " Creating additional Hive test tables"
 echo "======================================================"
 
-$SPARK_SQL --master yarn --conf spark.sql.warehouse.dir=hdfs://namenode.hive-net:9000/user/hive/warehouse <<'EOF'
+# Obtain Kerberos ticket
+echo "[init] Obtaining Kerberos ticket ..."
+docker exec ${CONTAINER} kinit -kt /etc/security/keytabs/spark.keytab ${PRINCIPAL}
+
+# Wait for the Hive Metastore to be reachable
+echo "[init] Waiting for Hive Metastore (9083) ..."
+max_retries=30; retry=0
+while ! docker exec ${CONTAINER} nc -z hive-metastore 9083 2>/dev/null; do
+    retry=$((retry + 1))
+    [ "$retry" -ge "$max_retries" ] && { echo "ERROR: Hive Metastore not reachable"; exit 1; }
+    echo "  attempt ${retry}/${max_retries} ..."; sleep 5
+done
+echo "[init] Hive Metastore reachable."
+
+docker exec -i ${CONTAINER} /opt/spark/bin/spark-sql --master 'local[*]' <<'EOF'
 
 -- ============================================================
 -- 1. products（商品表，非分区，~200行）
