@@ -193,4 +193,6 @@ date > "${READY_FILE}"
 # Step 6: Start KDC (foreground)
 # -------------------------------------------------------
 echo "[kdc] Starting KDC daemon ..."
-krb5kdc -n
+# exec so krb5kdc becomes PID 1 and receives SIGTERM directly — without it
+# bash stays PID 1, ignores the signal, and docker stop waits 10s then SIGKILLs.
+exec krb5kdc -n

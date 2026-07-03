@@ -13,6 +13,11 @@
 #   make status  — show service health status
 # ============================================================
 
+# bash (not sh) so recipes can use `set -o pipefail` — without it a pipeline's
+# exit code is the last command's, letting docker-exec failures vanish behind
+# `| tail`.
+SHELL := /bin/bash
+
 .PHONY: build up down clean test kinit logs status restart sync-conf
 
 # -- Config sync -----------------------------------------
@@ -98,7 +103,7 @@ yarn-status:
 # Kerberos SASL — no YARN app, no Connect client needed).
 test:
 	@echo "=== Smoke Test: spark-sql local mode (Kerberos) ==="
-	@docker exec spark-connect bash -lc "\
+	@set -o pipefail; docker exec spark-connect bash -lc "\
 		kinit -kt /etc/security/keytabs/spark.keytab spark/spark-connect.hive-net@EXAMPLE.COM && \
 		/opt/spark/bin/spark-sql --master 'local[*]' \
 		-e \"CREATE DATABASE IF NOT EXISTS smoke_test; \
@@ -108,15 +113,26 @@ test:
 		    SELECT * FROM t1; \
 		    DROP TABLE t1; \
 		    DROP DATABASE smoke_test;\"" \
-		2>&1 | tail -20
+		2>&1 | tail -20 \
+		|| { echo "=== Smoke test FAILED ==="; exit 1; }
 	@echo "=== Smoke test passed ==="
 
 # -- Internal helpers ------------------------------------
+# Waits until every service defined in docker-compose.yml reports (healthy).
+# EXPECTED comes from `docker compose config --services` (not `ps`, which
+# omits crashed containers and would shrink the target). Fails loudly on
+# timeout instead of letting `make up` pretend everything came up.
 _wait:
-	@for i in $$(seq 1 40); do \
+	@EXPECTED=$$(docker compose config --services | wc -l); \
+	for i in $$(seq 1 40); do \
 		HEALTHY=$$(docker compose ps --format '{{.Status}}' 2>/dev/null | grep -c "(healthy)"); \
-		TOTAL=$$(docker compose ps --format '{{.Name}}' 2>/dev/null | wc -l); \
-		printf "\r  Healthy: %s/%s" "$$HEALTHY" "$$TOTAL"; \
-		if [ "$$HEALTHY" -ge 6 ]; then printf "\n"; $(MAKE) --no-print-directory status; break; fi; \
+		printf "\r  Healthy: %s/%s" "$$HEALTHY" "$$EXPECTED"; \
+		if [ "$$HEALTHY" -ge "$$EXPECTED" ]; then \
+			printf "\n"; $(MAKE) --no-print-directory status; exit 0; \
+		fi; \
 		sleep 10; \
-	done
+	done; \
+	printf "\n"; \
+	echo "ERROR: not all services became healthy within the wait window:"; \
+	$(MAKE) --no-print-directory status; \
+	exit 1

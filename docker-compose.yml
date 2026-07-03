@@ -151,7 +151,10 @@ services:
       namenode:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://datanode:9864/jmx && PORT_HEX=$$(printf '%X' 8042); grep -q \":$${PORT_HEX} \" /proc/net/tcp6 2>/dev/null || grep -q \":$${PORT_HEX} \" /proc/net/tcp 2>/dev/null"]
+      # DataNode web UI up AND NodeManager port listening. The port grep is
+      # grouped in { } so a curl failure fails the whole check — with a plain
+      # `;` the grep alone decided the exit code and the curl was ignored.
+      test: ["CMD-SHELL", "curl -sf http://datanode:9864/jmx >/dev/null && PORT_HEX=$$(printf '%04X' 8042) && { grep -q \":$${PORT_HEX} \" /proc/net/tcp6 2>/dev/null || grep -q \":$${PORT_HEX} \" /proc/net/tcp 2>/dev/null; }"]
       interval: 15s
       timeout: 10s
       retries: 15
