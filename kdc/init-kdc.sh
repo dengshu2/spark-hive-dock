@@ -15,6 +15,12 @@ set -e
 # for image reuse, but changing it requires touching all of the above.
 REALM="${KRB5_REALM:-EXAMPLE.COM}"
 KDC_PASSWORD="${KRB5_KDC_PASSWORD:?KRB5_KDC_PASSWORD must be set (docker-compose passes it from .env)}"
+# :? only rejects empty values — an unedited `cp .env.example .env` would
+# otherwise make "<CHANGE_ME>" the literal KDC master password.
+case "${KDC_PASSWORD}" in *CHANGE_ME*)
+    echo "[kdc] ERROR: KRB5_KDC_PASSWORD is still the .env.example placeholder — edit .env" >&2
+    exit 1;;
+esac
 KEYTAB_DIR="/etc/security/keytabs"
 READY_FILE="${KEYTAB_DIR}/.kdc-ready"
 

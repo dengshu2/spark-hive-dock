@@ -77,7 +77,7 @@ status:
 kinit:
 	@echo "=== Kerberos Ticket Status ==="
 	@echo "--- KDC ---"
-	@docker exec kdc kadmin.local -q "listprincs" 2>/dev/null | head -20
+	@set -o pipefail; docker exec kdc kadmin.local -q "listprincs" 2>/dev/null | head -20 || echo "No principals (KDC not reachable)"
 	@echo ""
 	@echo "--- NameNode (HDFS + YARN RM) ---"
 	@docker exec namenode klist 2>/dev/null || echo "No ticket"
@@ -124,6 +124,10 @@ test:
 # timeout instead of letting `make up` pretend everything came up.
 _wait:
 	@EXPECTED=$$(docker compose config --services | wc -l); \
+	if [ "$$EXPECTED" -eq 0 ]; then \
+		echo "ERROR: docker compose config failed — cannot determine expected service count"; \
+		exit 1; \
+	fi; \
 	for i in $$(seq 1 40); do \
 		HEALTHY=$$(docker compose ps --format '{{.Status}}' 2>/dev/null | grep -c "(healthy)"); \
 		printf "\r  Healthy: %s/%s" "$$HEALTHY" "$$EXPECTED"; \

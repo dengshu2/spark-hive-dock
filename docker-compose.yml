@@ -155,7 +155,9 @@ services:
       # DataNode web UI up AND NodeManager port listening. The port grep is
       # grouped in { } so a curl failure fails the whole check — with a plain
       # `;` the grep alone decided the exit code and the curl was ignored.
-      test: ["CMD-SHELL", "curl -sf http://datanode:9864/jmx >/dev/null && PORT_HEX=$$(printf '%04X' 8042) && { grep -q \":$${PORT_HEX} \" /proc/net/tcp6 2>/dev/null || grep -q \":$${PORT_HEX} \" /proc/net/tcp 2>/dev/null; }"]
+      # The pattern anchors to the local_address column and LISTEN state (0A),
+      # so lingering TIME_WAIT rows or remote-port matches can't pass it.
+      test: ["CMD-SHELL", "curl -sf http://datanode:9864/jmx >/dev/null && PORT_HEX=$$(printf '%04X' 8042) && { grep -qE \":$${PORT_HEX} [0-9A-F:]+ 0A \" /proc/net/tcp6 2>/dev/null || grep -qE \":$${PORT_HEX} [0-9A-F:]+ 0A \" /proc/net/tcp 2>/dev/null; }"]
       interval: 15s
       timeout: 10s
       retries: 15
@@ -203,7 +205,8 @@ services:
       datanode:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "PORT_HEX=$$(printf '%X' 9083); grep -q \":$${PORT_HEX} \" /proc/net/tcp6 2>/dev/null || grep -q \":$${PORT_HEX} \" /proc/net/tcp 2>/dev/null"]
+      # Same %04X-padded, LISTEN-anchored pattern as the datanode check.
+      test: ["CMD-SHELL", "PORT_HEX=$$(printf '%04X' 9083) && { grep -qE \":$${PORT_HEX} [0-9A-F:]+ 0A \" /proc/net/tcp6 2>/dev/null || grep -qE \":$${PORT_HEX} [0-9A-F:]+ 0A \" /proc/net/tcp 2>/dev/null; }"]
       interval: 15s
       timeout: 10s
       retries: 15
@@ -247,7 +250,8 @@ services:
       hive-metastore:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "PORT_HEX=$$(printf '%X' 15002); grep -q \":$${PORT_HEX} \" /proc/net/tcp6 2>/dev/null || grep -q \":$${PORT_HEX} \" /proc/net/tcp 2>/dev/null"]
+      # Same %04X-padded, LISTEN-anchored pattern as the datanode check.
+      test: ["CMD-SHELL", "PORT_HEX=$$(printf '%04X' 15002) && { grep -qE \":$${PORT_HEX} [0-9A-F:]+ 0A \" /proc/net/tcp6 2>/dev/null || grep -qE \":$${PORT_HEX} [0-9A-F:]+ 0A \" /proc/net/tcp 2>/dev/null; }"]
       interval: 15s
       timeout: 10s
       retries: 20
