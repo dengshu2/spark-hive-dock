@@ -187,6 +187,7 @@ spark-hive-dock/
 ├── mysql/
 │   └── init.sql              # Metastore 数据库字符集配置
 └── scripts/
+    ├── lib.sh                      # 共享辅助函数：kinit、Metastore 等待、spark-sql 执行
     ├── spark-sql-shell.sh          # 交互式 spark-sql shell (Kerberos)
     ├── init-test-data.sh           # 示例数据库和表 (Kerberos 版)
     ├── init-more-tables.sh         # 额外测试表：products / dim_category / user_behavior

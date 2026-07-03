@@ -68,8 +68,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Download and install Spark (cached across rebuilds)
 RUN --mount=type=cache,target=/tmp/downloads \
-    if [ ! -f /tmp/downloads/spark-${SPARK_VERSION}.tgz ]; then \
-        curl -fSL "${SPARK_URL}" -o /tmp/downloads/spark-${SPARK_VERSION}.tgz; \
+    if ! gzip -t /tmp/downloads/spark-${SPARK_VERSION}.tgz 2>/dev/null; then \
+        curl -fSL --retry 3 "${SPARK_URL}" -o /tmp/downloads/spark-${SPARK_VERSION}.tgz.part \
+        && mv /tmp/downloads/spark-${SPARK_VERSION}.tgz.part /tmp/downloads/spark-${SPARK_VERSION}.tgz; \
     fi \
     && tar -xzf /tmp/downloads/spark-${SPARK_VERSION}.tgz -C /opt/ \
     && mv /opt/spark-${SPARK_VERSION}-bin-hadoop3 ${SPARK_HOME}
@@ -77,21 +78,24 @@ RUN --mount=type=cache,target=/tmp/downloads \
 # Add MySQL JDBC driver (Spark needs it for Hive Metastore access)
 RUN --mount=type=cache,target=/tmp/downloads \
     if [ ! -f /tmp/downloads/mysql-connector-j-${MYSQL_CONNECTOR_VERSION}.jar ]; then \
-        curl -fSL "${MYSQL_CONNECTOR_URL}" -o /tmp/downloads/mysql-connector-j-${MYSQL_CONNECTOR_VERSION}.jar; \
+        curl -fSL --retry 3 "${MYSQL_CONNECTOR_URL}" -o /tmp/downloads/mysql-connector-j-${MYSQL_CONNECTOR_VERSION}.jar.part \
+        && mv /tmp/downloads/mysql-connector-j-${MYSQL_CONNECTOR_VERSION}.jar.part /tmp/downloads/mysql-connector-j-${MYSQL_CONNECTOR_VERSION}.jar; \
     fi \
     && cp /tmp/downloads/mysql-connector-j-${MYSQL_CONNECTOR_VERSION}.jar ${SPARK_HOME}/jars/
 
 # Add ClickHouse JDBC driver (for Spark -> ClickHouse writes via `scq sync`).
 RUN --mount=type=cache,target=/tmp/downloads \
     if [ ! -f /tmp/downloads/clickhouse-jdbc-${CLICKHOUSE_JDBC_VERSION}-all.jar ]; then \
-        curl -fSL "${CLICKHOUSE_JDBC_URL}" -o /tmp/downloads/clickhouse-jdbc-${CLICKHOUSE_JDBC_VERSION}-all.jar; \
+        curl -fSL --retry 3 "${CLICKHOUSE_JDBC_URL}" -o /tmp/downloads/clickhouse-jdbc-${CLICKHOUSE_JDBC_VERSION}-all.jar.part \
+        && mv /tmp/downloads/clickhouse-jdbc-${CLICKHOUSE_JDBC_VERSION}-all.jar.part /tmp/downloads/clickhouse-jdbc-${CLICKHOUSE_JDBC_VERSION}-all.jar; \
     fi \
     && cp /tmp/downloads/clickhouse-jdbc-${CLICKHOUSE_JDBC_VERSION}-all.jar ${SPARK_HOME}/jars/
 
 # Add the Iceberg Spark runtime (table-format support; see ARG comment above).
 RUN --mount=type=cache,target=/tmp/downloads \
     if [ ! -f /tmp/downloads/iceberg-spark-runtime-4.1_2.13-${ICEBERG_SPARK_RUNTIME_VERSION}.jar ]; then \
-        curl -fSL "${ICEBERG_SPARK_RUNTIME_URL}" -o /tmp/downloads/iceberg-spark-runtime-4.1_2.13-${ICEBERG_SPARK_RUNTIME_VERSION}.jar; \
+        curl -fSL --retry 3 "${ICEBERG_SPARK_RUNTIME_URL}" -o /tmp/downloads/iceberg-spark-runtime-4.1_2.13-${ICEBERG_SPARK_RUNTIME_VERSION}.jar.part \
+        && mv /tmp/downloads/iceberg-spark-runtime-4.1_2.13-${ICEBERG_SPARK_RUNTIME_VERSION}.jar.part /tmp/downloads/iceberg-spark-runtime-4.1_2.13-${ICEBERG_SPARK_RUNTIME_VERSION}.jar; \
     fi \
     && cp /tmp/downloads/iceberg-spark-runtime-4.1_2.13-${ICEBERG_SPARK_RUNTIME_VERSION}.jar ${SPARK_HOME}/jars/
 

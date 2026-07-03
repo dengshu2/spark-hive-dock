@@ -33,8 +33,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Download and install Hive (cached across rebuilds)
 RUN --mount=type=cache,target=/tmp/downloads \
-    if [ ! -f /tmp/downloads/hive-${HIVE_VERSION}.tar.gz ]; then \
-        curl -fSL "${HIVE_URL}" -o /tmp/downloads/hive-${HIVE_VERSION}.tar.gz; \
+    if ! gzip -t /tmp/downloads/hive-${HIVE_VERSION}.tar.gz 2>/dev/null; then \
+        curl -fSL --retry 3 "${HIVE_URL}" -o /tmp/downloads/hive-${HIVE_VERSION}.tar.gz.part \
+        && mv /tmp/downloads/hive-${HIVE_VERSION}.tar.gz.part /tmp/downloads/hive-${HIVE_VERSION}.tar.gz; \
     fi \
     && tar -xzf /tmp/downloads/hive-${HIVE_VERSION}.tar.gz -C /opt/ \
     && mv /opt/apache-hive-${HIVE_VERSION}-bin ${HIVE_HOME}
@@ -57,7 +58,8 @@ RUN rm -f ${HIVE_HOME}/lib/log4j-slf4j-impl-*.jar ${HIVE_HOME}/lib/log4j-slf4j2-
 # Add MySQL JDBC driver
 RUN --mount=type=cache,target=/tmp/downloads \
     if [ ! -f /tmp/downloads/mysql-connector-java-${MYSQL_CONNECTOR_VERSION}.jar ]; then \
-        curl -fSL "${MYSQL_CONNECTOR_URL}" -o /tmp/downloads/mysql-connector-java-${MYSQL_CONNECTOR_VERSION}.jar; \
+        curl -fSL --retry 3 "${MYSQL_CONNECTOR_URL}" -o /tmp/downloads/mysql-connector-java-${MYSQL_CONNECTOR_VERSION}.jar.part \
+        && mv /tmp/downloads/mysql-connector-java-${MYSQL_CONNECTOR_VERSION}.jar.part /tmp/downloads/mysql-connector-java-${MYSQL_CONNECTOR_VERSION}.jar; \
     fi \
     && cp /tmp/downloads/mysql-connector-java-${MYSQL_CONNECTOR_VERSION}.jar ${HIVE_HOME}/lib/
 
