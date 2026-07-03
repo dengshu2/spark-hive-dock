@@ -10,8 +10,11 @@
 # ============================================================
 set -e
 
+# Realm is fixed: EXAMPLE.COM is baked into krb5.conf, all *-site.xml
+# principals, and every entrypoint kinit. KRB5_REALM stays overridable here
+# for image reuse, but changing it requires touching all of the above.
 REALM="${KRB5_REALM:-EXAMPLE.COM}"
-KDC_PASSWORD="${KRB5_KDC_PASSWORD:-kdc_admin_2024}"
+KDC_PASSWORD="${KRB5_KDC_PASSWORD:?KRB5_KDC_PASSWORD must be set (docker-compose passes it from .env)}"
 KEYTAB_DIR="/etc/security/keytabs"
 READY_FILE="${KEYTAB_DIR}/.kdc-ready"
 

@@ -34,8 +34,9 @@ services:
     domainname: hive-net
     environment:
       TZ: ${TZ:-Asia/Shanghai}
-      KRB5_REALM: ${KRB5_REALM:-EXAMPLE.COM}
-      KRB5_KDC_PASSWORD: ${KRB5_KDC_PASSWORD:-kdc_admin_2024}
+      # Realm is fixed to EXAMPLE.COM: it is baked into krb5.conf, every
+      # *-site.xml principal, and every entrypoint kinit. Not configurable.
+      KRB5_KDC_PASSWORD: ${KRB5_KDC_PASSWORD:?set it in .env (cp .env.example .env)}
     volumes:
       - keytabs:/etc/security/keytabs
       - krb5kdc-data:/var/lib/krb5kdc
@@ -62,17 +63,17 @@ services:
     hostname: mysql
     environment:
       TZ: ${TZ:-Asia/Shanghai}
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rootpass2024}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?set it in .env (cp .env.example .env)}
       MYSQL_DATABASE: ${MYSQL_DATABASE:-hive_metastore}
       MYSQL_USER: ${MYSQL_USER:-hive}
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-hive2024}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?set it in .env (cp .env.example .env)}
     ports:
       - "127.0.0.1:3306:3306"
     volumes:
       - mysql-data:/var/lib/mysql
       - ./mysql/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:-rootpass2024}"]
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD}"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -182,10 +183,11 @@ services:
     domainname: hive-net
     environment:
       TZ: ${TZ:-Asia/Shanghai}
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rootpass2024}
+      # Least privilege: the metastore only needs its own DB user; the MySQL
+      # readiness ping in the entrypoint uses these same credentials.
       MYSQL_DATABASE: ${MYSQL_DATABASE:-hive_metastore}
       MYSQL_USER: ${MYSQL_USER:-hive}
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-hive2024}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?set it in .env (cp .env.example .env)}
     ports:
       - "127.0.0.1:9083:9083"   # Thrift Metastore
     volumes:

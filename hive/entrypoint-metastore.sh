@@ -12,6 +12,9 @@ set -e
 
 KEYTAB_DIR="/etc/security/keytabs"
 
+# Fail fast on missing secrets instead of continuing with a broken config.
+: "${MYSQL_PASSWORD:?MYSQL_PASSWORD must be set (docker-compose passes it from .env)}"
+
 wait_for_port() {
     local host=$1
     local port=$2
@@ -36,7 +39,9 @@ wait_for_mysql() {
     local retry=0
 
     echo "[metastore] Waiting for MySQL to be ready ..."
-    while ! mysqladmin ping -h mysql -u root -p"${MYSQL_ROOT_PASSWORD}" --silent 2>/dev/null; do
+    # Ping with the metastore's own user — this container has no reason to
+    # hold the MySQL root password.
+    while ! mysqladmin ping -h mysql -u "${MYSQL_USER:-hive}" -p"${MYSQL_PASSWORD}" --silent 2>/dev/null; do
         retry=$((retry + 1))
         if [ "$retry" -ge "$max_retries" ]; then
             echo "[metastore] ERROR: MySQL not ready after ${max_retries} attempts"
@@ -81,7 +86,7 @@ wait_for_kdc
 echo "[metastore] Injecting database credentials ..."
 sed -i "s|__MYSQL_DATABASE__|${MYSQL_DATABASE:-hive_metastore}|g" ${HIVE_CONF_DIR}/hive-site.xml
 sed -i "s|__MYSQL_USER__|${MYSQL_USER:-hive}|g" ${HIVE_CONF_DIR}/hive-site.xml
-sed -i "s|__MYSQL_PASSWORD__|${MYSQL_PASSWORD:-hive2024}|g" ${HIVE_CONF_DIR}/hive-site.xml
+sed -i "s|__MYSQL_PASSWORD__|${MYSQL_PASSWORD}|g" ${HIVE_CONF_DIR}/hive-site.xml
 
 # Step 2: Wait for MySQL
 wait_for_mysql
