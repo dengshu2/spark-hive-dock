@@ -61,10 +61,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     procps \
     && rm -rf /var/lib/apt/lists/*
 
-# Download and install Hadoop (cached across rebuilds)
+# Download and install Hadoop (cached across rebuilds).
+# gzip -t treats a truncated cached tarball as missing, and the .part + mv
+# dance keeps an interrupted curl from poisoning the cache for later builds.
 RUN --mount=type=cache,target=/tmp/downloads \
-    if [ ! -f /tmp/downloads/hadoop-${HADOOP_VERSION}.tar.gz ]; then \
-        curl -fSL "${HADOOP_URL}" -o /tmp/downloads/hadoop-${HADOOP_VERSION}.tar.gz; \
+    if ! gzip -t /tmp/downloads/hadoop-${HADOOP_VERSION}.tar.gz 2>/dev/null; then \
+        curl -fSL --retry 3 "${HADOOP_URL}" -o /tmp/downloads/hadoop-${HADOOP_VERSION}.tar.gz.part \
+        && mv /tmp/downloads/hadoop-${HADOOP_VERSION}.tar.gz.part /tmp/downloads/hadoop-${HADOOP_VERSION}.tar.gz; \
     fi \
     && tar -xzf /tmp/downloads/hadoop-${HADOOP_VERSION}.tar.gz -C /opt/ \
     && mv /opt/hadoop-${HADOOP_VERSION} ${HADOOP_HOME} \
