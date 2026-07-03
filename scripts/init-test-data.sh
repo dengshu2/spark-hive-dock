@@ -3,45 +3,25 @@
 # Initialize Test Data (Kerberized)
 # Creates a sample database, table, and inserts test records.
 #
-# Runs via spark-sql in local mode (--master local[*]): the driver
-# talks directly to the Hive Metastore over Kerberos SASL and writes
-# to HDFS with its TGT — no YARN app and no Spark Connect client needed.
 # Requires the cluster to be fully running with Kerberos enabled.
+# See scripts/lib.sh for how the cluster is reached.
 # ============================================================
 set -e
-
-CONTAINER=spark-connect
-PRINCIPAL="spark/spark-connect.hive-net@EXAMPLE.COM"
+source "$(dirname "$0")/lib.sh"
 
 echo "============================================================"
 echo " Initializing Test Data (Kerberos)"
 echo "============================================================"
 echo ""
 
-# Step 0: Obtain Kerberos ticket inside the container
-echo "[init] Obtaining Kerberos ticket ..."
-docker exec ${CONTAINER} kinit -kt /etc/security/keytabs/spark.keytab ${PRINCIPAL}
-
-# Step 1: Wait for the Hive Metastore to be reachable
-echo "[init] Waiting for Hive Metastore (9083) ..."
-max_retries=30
-retry=0
-while ! docker exec ${CONTAINER} nc -z hive-metastore 9083 2>/dev/null; do
-    retry=$((retry + 1))
-    if [ "$retry" -ge "$max_retries" ]; then
-        echo "[init] ERROR: Hive Metastore not reachable after ${max_retries} attempts"
-        exit 1
-    fi
-    echo "[init]   attempt ${retry}/${max_retries} ..."
-    sleep 5
-done
-echo "[init] Hive Metastore is reachable"
+spark_kinit
+wait_for_metastore
 echo ""
 
-# Step 2: Create database + table, insert data, and verify — all in a
+# Create database + table, insert data, and verify — all in a
 # single spark-sql session to avoid repeated driver/JVM cold starts.
 echo "[init] Creating sample_db.employees and inserting records ..."
-docker exec ${CONTAINER} /opt/spark/bin/spark-sql --master 'local[*]' -e "
+spark_sql -e "
 CREATE DATABASE IF NOT EXISTS sample_db;
 USE sample_db;
 CREATE TABLE IF NOT EXISTS employees (

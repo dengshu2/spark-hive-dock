@@ -11,6 +11,9 @@
 #   spark = SparkSession.builder.remote("sc://localhost:15002").getOrCreate()
 #   spark.sql("SHOW DATABASES").show()
 # ============================================================
-docker exec -it spark-connect bash -lc "\
-    kinit -kt /etc/security/keytabs/spark.keytab spark/spark-connect.hive-net@EXAMPLE.COM && \
-    /opt/spark/bin/spark-sql --master 'local[*]'"
+set -e
+source "$(dirname "$0")/lib.sh"
+
+spark_kinit
+# Interactive session needs a TTY, so this one doesn't go through spark_sql.
+docker exec -it "${CONTAINER}" /opt/spark/bin/spark-sql --master 'local[*]'

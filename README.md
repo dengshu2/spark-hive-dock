@@ -187,6 +187,7 @@ spark-hive-dock/
 ├── mysql/
 │   └── init.sql              # Metastore DB charset config
 └── scripts/
+    ├── lib.sh                      # Shared helpers: kinit, metastore wait, spark-sql exec
     ├── spark-sql-shell.sh          # Interactive spark-sql shell (Kerberos)
     ├── init-test-data.sh           # Sample database + table (Kerberized)
     ├── init-more-tables.sh         # Extra test tables: products / dim_category / user_behavior
