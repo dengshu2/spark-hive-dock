@@ -34,8 +34,9 @@ services:
     domainname: hive-net
     environment:
       TZ: ${TZ:-Asia/Shanghai}
-      KRB5_REALM: ${KRB5_REALM:-EXAMPLE.COM}
-      KRB5_KDC_PASSWORD: ${KRB5_KDC_PASSWORD:-kdc_admin_2024}
+      # Realm is fixed to EXAMPLE.COM: it is baked into krb5.conf, every
+      # *-site.xml principal, and every entrypoint kinit. Not configurable.
+      KRB5_KDC_PASSWORD: ${KRB5_KDC_PASSWORD:?set it in .env (cp .env.example .env)}
     volumes:
       - keytabs:/etc/security/keytabs
       - krb5kdc-data:/var/lib/krb5kdc
@@ -62,17 +63,17 @@ services:
     hostname: mysql
     environment:
       TZ: ${TZ:-Asia/Shanghai}
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rootpass2024}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?set it in .env (cp .env.example .env)}
       MYSQL_DATABASE: ${MYSQL_DATABASE:-hive_metastore}
       MYSQL_USER: ${MYSQL_USER:-hive}
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-hive2024}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?set it in .env (cp .env.example .env)}
     ports:
       - "127.0.0.1:3306:3306"
     volumes:
       - mysql-data:/var/lib/mysql
       - ./mysql/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:-rootpass2024}"]
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD}"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -151,7 +152,12 @@ services:
       namenode:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://datanode:9864/jmx && PORT_HEX=$$(printf '%X' 8042); grep -q \":$${PORT_HEX} \" /proc/net/tcp6 2>/dev/null || grep -q \":$${PORT_HEX} \" /proc/net/tcp 2>/dev/null"]
+      # DataNode web UI up AND NodeManager port listening. The port grep is
+      # grouped in { } so a curl failure fails the whole check — with a plain
+      # `;` the grep alone decided the exit code and the curl was ignored.
+      # The pattern anchors to the local_address column and LISTEN state (0A),
+      # so lingering TIME_WAIT rows or remote-port matches can't pass it.
+      test: ["CMD-SHELL", "curl -sf http://datanode:9864/jmx >/dev/null && PORT_HEX=$$(printf '%04X' 8042) && { grep -qE \":$${PORT_HEX} [0-9A-F:]+ 0A \" /proc/net/tcp6 2>/dev/null || grep -qE \":$${PORT_HEX} [0-9A-F:]+ 0A \" /proc/net/tcp 2>/dev/null; }"]
       interval: 15s
       timeout: 10s
       retries: 15
@@ -179,10 +185,11 @@ services:
     domainname: hive-net
     environment:
       TZ: ${TZ:-Asia/Shanghai}
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rootpass2024}
+      # Least privilege: the metastore only needs its own DB user; the MySQL
+      # readiness ping in the entrypoint uses these same credentials.
       MYSQL_DATABASE: ${MYSQL_DATABASE:-hive_metastore}
       MYSQL_USER: ${MYSQL_USER:-hive}
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-hive2024}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?set it in .env (cp .env.example .env)}
     ports:
       - "127.0.0.1:9083:9083"   # Thrift Metastore
     volumes:
@@ -198,7 +205,8 @@ services:
       datanode:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "PORT_HEX=$$(printf '%X' 9083); grep -q \":$${PORT_HEX} \" /proc/net/tcp6 2>/dev/null || grep -q \":$${PORT_HEX} \" /proc/net/tcp 2>/dev/null"]
+      # Same %04X-padded, LISTEN-anchored pattern as the datanode check.
+      test: ["CMD-SHELL", "PORT_HEX=$$(printf '%04X' 9083) && { grep -qE \":$${PORT_HEX} [0-9A-F:]+ 0A \" /proc/net/tcp6 2>/dev/null || grep -qE \":$${PORT_HEX} [0-9A-F:]+ 0A \" /proc/net/tcp 2>/dev/null; }"]
       interval: 15s
       timeout: 10s
       retries: 15
@@ -242,7 +250,8 @@ services:
       hive-metastore:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "PORT_HEX=$$(printf '%X' 15002); grep -q \":$${PORT_HEX} \" /proc/net/tcp6 2>/dev/null || grep -q \":$${PORT_HEX} \" /proc/net/tcp 2>/dev/null"]
+      # Same %04X-padded, LISTEN-anchored pattern as the datanode check.
+      test: ["CMD-SHELL", "PORT_HEX=$$(printf '%04X' 15002) && { grep -qE \":$${PORT_HEX} [0-9A-F:]+ 0A \" /proc/net/tcp6 2>/dev/null || grep -qE \":$${PORT_HEX} [0-9A-F:]+ 0A \" /proc/net/tcp 2>/dev/null; }"]
       interval: 15s
       timeout: 10s
       retries: 20

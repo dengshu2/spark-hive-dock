@@ -2,7 +2,7 @@
 
 [English](README.md) | 中文
 
-基于 Docker 的 Spark SQL 集群，集成 Hive Metastore 和 Hadoop HDFS，使用 **MIT Kerberos** 实现安全认证，**YARN** 提供资源管理和 Delegation Token 分发。程序化访问由 **Spark Connect Server**（gRPC，Spark 3.5+）通过 `sc://` 提供。MySQL 作为 Metastore 后端存储。面向开发和测试环境 — **请勿用于生产**。
+基于 Docker 的 Spark SQL 集群，集成 Hive Metastore 和 Hadoop HDFS，使用 **MIT Kerberos** 实现安全认证，**YARN** 提供资源管理和 Delegation Token 分发。程序化访问由 **Spark Connect Server**（gRPC，Spark 4.x）通过 `sc://` 提供。MySQL 作为 Metastore 后端存储。面向开发和测试环境 — **请勿用于生产**。
 
 ## 版本矩阵
 
@@ -93,7 +93,7 @@ spark.sql("SHOW DATABASES").show()
 spark.sql("SELECT * FROM sample_db.employees").show()
 ```
 
-> Connect Server 持有 Kerberos 身份（`spark` principal）并代表客户端向 YARN 提交作业 —— 客户端**不需要**自己的 keytab。gRPC 端口仅绑定到 `127.0.0.1`，请勿对外暴露（Spark Connect 3.5 没有内置强认证）。
+> Connect Server 持有 Kerberos 身份（`spark` principal）并代表客户端向 YARN 提交作业 —— 客户端**不需要**自己的 keytab。gRPC 端口仅绑定到 `127.0.0.1`，请勿对外暴露（Connect 端点未配置任何认证）。
 
 ## Make 命令
 
@@ -139,8 +139,9 @@ spark.sql("SELECT * FROM sample_db.employees").show()
 
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
-| `KRB5_REALM` | Kerberos realm 名称 | `EXAMPLE.COM` |
-| `KRB5_KDC_PASSWORD` | KDC 数据库主密码 | — |
+| `KRB5_KDC_PASSWORD` | KDC 数据库主密码 | —（必填，在 `.env` 中设置） |
+
+> Realm **固定为 `EXAMPLE.COM`** —— 它被写死在 `krb5.conf`、所有 `*-site.xml` principal 以及各 entrypoint 的 `kinit` 中，因此有意不作为变量暴露。
 
 ## Web 界面
 
@@ -159,7 +160,6 @@ spark-hive-dock/
 ├── Makefile                  # 构建、启动、测试的统一入口
 ├── docker-compose.yml        # 服务编排 (6 个容器)
 ├── .env.example              # 环境变量模板
-├── .dockerignore             # 构建上下文排除规则
 ├── kdc/
 │   ├── Dockerfile            # MIT Kerberos KDC 镜像
 │   ├── krb5.conf             # Kerberos 客户端配置
@@ -187,13 +187,15 @@ spark-hive-dock/
 ├── mysql/
 │   └── init.sql              # Metastore 数据库字符集配置
 └── scripts/
-    ├── spark-sql-shell.sh    # 交互式 spark-sql shell (Kerberos)
-    └── init-test-data.sh     # 示例数据库和表 (Kerberos 版)
+    ├── spark-sql-shell.sh          # 交互式 spark-sql shell (Kerberos)
+    ├── init-test-data.sh           # 示例数据库和表 (Kerberos 版)
+    ├── init-more-tables.sh         # 额外测试表：products / dim_category / user_behavior
+    └── init-hive-for-clickhouse.sh # hive_db.orders / user_profiles（Parquet，供 ClickHouse 使用）
 ```
 
 ## 环境变量
 
-所有配置通过 `.env` 文件管理。敏感信息在运行时注入，不会存储在已提交的配置文件中。
+所有配置通过 `.env` 文件管理。敏感信息在运行时注入，不会存储在已提交的配置文件中；必填密码缺失时 compose 会直接报错退出。
 
 | 变量 | 说明 | 使用方 |
 |------|------|--------|
@@ -201,13 +203,11 @@ spark-hive-dock/
 | `HIVE_VERSION` | Hive 版本 | hive |
 | `SPARK_VERSION` | Spark 版本 | spark |
 | `MYSQL_VERSION` | MySQL 版本 | mysql |
-| `MYSQL_ROOT_PASSWORD` | MySQL root 密码 | mysql, hive |
+| `MYSQL_ROOT_PASSWORD` | MySQL root 密码（必填） | mysql |
 | `MYSQL_DATABASE` | Metastore 数据库名 | mysql, hive |
 | `MYSQL_USER` | Metastore 数据库用户 | mysql, hive |
-| `MYSQL_PASSWORD` | Metastore 数据库密码 | mysql, hive |
-| `HDFS_REPLICATION` | HDFS 副本数 | hadoop |
-| `KRB5_REALM` | Kerberos realm | kdc, hadoop, hive, spark |
-| `KRB5_KDC_PASSWORD` | KDC 数据库主密码 | kdc |
+| `MYSQL_PASSWORD` | Metastore 数据库密码（必填） | mysql, hive |
+| `KRB5_KDC_PASSWORD` | KDC 数据库主密码（必填） | kdc |
 | `TZ` | 容器时区 | all |
 
 ## 已知问题与解决方案
@@ -224,10 +224,9 @@ spark-hive-dock/
 | 首次运行失败残留 | 执行 `make clean` 清除卷后重试 |
 | Filesystem closed 异常 | `core-site.xml` 设置 `fs.hdfs.impl.disable.cache=true`，避免共享 DFSClient 被关闭 |
 | Docker DNS `_HOST` 展开不匹配 | 所有服务 URI 使用 FQDN (`.hive-net`)；compose 中设置 `domainname: hive-net` |
-| SASL 降级到 DIGEST-MD5 | `hive.server2.enable.doAs=false` 保持 Spark 的 Kerberos Subject 连接 MetaStore |
 | Executor Kerberos 认证 | 已通过 YARN 模式解决 — YARN 自动分发 Delegation Token 给 Executor |
 
-> **注意**: `spark/` 目录中的 `core-site.xml`、`hdfs-site.xml`、`yarn-site.xml`、`mapred-site.xml` 是 `hadoop/` 目录下对应文件的副本。如果修改了 Hadoop 配置，请同时更新两处。
+> **注意**: `spark/{core,hdfs,yarn,mapred}-site.xml` 是 `hadoop/` 对应文件的**生成物** —— 只修改 `hadoop/` 一侧即可，`make build` 会通过 `sync-conf` 自动同步保持一致。`spark/hive-site.xml` 为 Spark 专属，不参与同步。
 
 ## 生命周期
 
@@ -258,9 +257,10 @@ make kinit
 - 所有服务在容器内以 root 用户运行
 - Kerberos realm 使用测试域名 (`EXAMPLE.COM`)
 - `ignore.secure.ports.for.testing=true` 允许非特权 HDFS 端口
-- `hive.server2.enable.doAs=false` — 不进行用户级模拟
+- 所有查询均以 `spark` 服务 principal 身份执行 — 不进行用户级模拟
 - 代理用户限制完全开放 (`hadoop.proxyuser.*.hosts=*`)
 - Spark Connect Server 使用 YARN client 模式，启用动态分配（0–3 executor），由 NodeManager 管理
+- ResourceManager / NodeManager 在 namenode / datanode 容器内以后台守护进程运行；若其中之一崩溃，容器会变为 unhealthy 但**不会**自动重启 — 需执行 `make restart`
 
 **请勿将此配置用于生产环境。**
 

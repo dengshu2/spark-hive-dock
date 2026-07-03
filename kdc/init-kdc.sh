@@ -10,8 +10,17 @@
 # ============================================================
 set -e
 
+# Realm is fixed: EXAMPLE.COM is baked into krb5.conf, all *-site.xml
+# principals, and every entrypoint kinit. KRB5_REALM stays overridable here
+# for image reuse, but changing it requires touching all of the above.
 REALM="${KRB5_REALM:-EXAMPLE.COM}"
-KDC_PASSWORD="${KRB5_KDC_PASSWORD:-kdc_admin_2024}"
+KDC_PASSWORD="${KRB5_KDC_PASSWORD:?KRB5_KDC_PASSWORD must be set (docker-compose passes it from .env)}"
+# :? only rejects empty values — an unedited `cp .env.example .env` would
+# otherwise make "<CHANGE_ME>" the literal KDC master password.
+case "${KDC_PASSWORD}" in *CHANGE_ME*)
+    echo "[kdc] ERROR: KRB5_KDC_PASSWORD is still the .env.example placeholder — edit .env" >&2
+    exit 1;;
+esac
 KEYTAB_DIR="/etc/security/keytabs"
 READY_FILE="${KEYTAB_DIR}/.kdc-ready"
 
@@ -193,4 +202,6 @@ date > "${READY_FILE}"
 # Step 6: Start KDC (foreground)
 # -------------------------------------------------------
 echo "[kdc] Starting KDC daemon ..."
-krb5kdc -n
+# exec so krb5kdc becomes PID 1 and receives SIGTERM directly — without it
+# bash stays PID 1, ignores the signal, and docker stop waits 10s then SIGKILLs.
+exec krb5kdc -n

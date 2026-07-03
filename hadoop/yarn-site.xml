@@ -4,8 +4,9 @@
   YARN Configuration
   - ResourceManager runs on namenode container
   - NodeManager runs on datanode container
-  - Spark Shuffle Service for efficient shuffle
   - Kerberos authentication
+  (No Spark external shuffle service: dynamic allocation uses
+   driver-side shuffleTracking, see spark-defaults.conf)
 -->
 <configuration>
     <!-- ResourceManager -->

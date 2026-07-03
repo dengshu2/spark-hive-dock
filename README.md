@@ -93,7 +93,7 @@ spark.sql("SHOW DATABASES").show()
 spark.sql("SELECT * FROM sample_db.employees").show()
 ```
 
-> The Connect server holds the Kerberos identity (`spark` principal) and submits work to YARN on the client's behalf — clients do **not** need their own keytab. The gRPC port is bound to `127.0.0.1` only; do not expose it publicly (Spark Connect has no built-in strong auth in 3.5).
+> The Connect server holds the Kerberos identity (`spark` principal) and submits work to YARN on the client's behalf — clients do **not** need their own keytab. The gRPC port is bound to `127.0.0.1` only; do not expose it publicly (no authentication is configured on the Connect endpoint).
 
 ## Make Commands
 
@@ -139,8 +139,9 @@ The cluster uses MIT Kerberos for authentication across all services. The KDC co
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `KRB5_REALM` | Kerberos realm name | `EXAMPLE.COM` |
-| `KRB5_KDC_PASSWORD` | KDC database master password | — |
+| `KRB5_KDC_PASSWORD` | KDC database master password | — (required, set in `.env`) |
+
+> The realm is **fixed to `EXAMPLE.COM`** — it is baked into `krb5.conf`, every `*-site.xml` principal, and every entrypoint `kinit`, so it is intentionally not exposed as a variable.
 
 ## Web UIs
 
@@ -159,7 +160,6 @@ spark-hive-dock/
 ├── Makefile                  # Build, start, and test entry point
 ├── docker-compose.yml        # Service orchestration (6 containers)
 ├── .env.example              # Environment template
-├── .dockerignore             # Build context exclusions
 ├── kdc/
 │   ├── Dockerfile            # MIT Kerberos KDC image
 │   ├── krb5.conf             # Kerberos client configuration
@@ -187,13 +187,15 @@ spark-hive-dock/
 ├── mysql/
 │   └── init.sql              # Metastore DB charset config
 └── scripts/
-    ├── spark-sql-shell.sh    # Interactive spark-sql shell (Kerberos)
-    └── init-test-data.sh     # Sample database + table (Kerberized)
+    ├── spark-sql-shell.sh          # Interactive spark-sql shell (Kerberos)
+    ├── init-test-data.sh           # Sample database + table (Kerberized)
+    ├── init-more-tables.sh         # Extra test tables: products / dim_category / user_behavior
+    └── init-hive-for-clickhouse.sh # hive_db.orders / user_profiles (Parquet, for ClickHouse)
 ```
 
 ## Environment Variables
 
-All configurable via `.env`. Secrets are injected at runtime — no credentials are stored in committed config files.
+All configurable via `.env`. Secrets are injected at runtime — no credentials are stored in committed config files, and compose fails fast if a required password is missing.
 
 | Variable | Description | Used By |
 |----------|-------------|---------|
@@ -201,13 +203,11 @@ All configurable via `.env`. Secrets are injected at runtime — no credentials 
 | `HIVE_VERSION` | Hive version | hive |
 | `SPARK_VERSION` | Spark version | spark |
 | `MYSQL_VERSION` | MySQL version | mysql |
-| `MYSQL_ROOT_PASSWORD` | MySQL root password | mysql, hive |
+| `MYSQL_ROOT_PASSWORD` | MySQL root password (required) | mysql |
 | `MYSQL_DATABASE` | Metastore database name | mysql, hive |
 | `MYSQL_USER` | Metastore database user | mysql, hive |
-| `MYSQL_PASSWORD` | Metastore database password | mysql, hive |
-| `HDFS_REPLICATION` | HDFS replication factor | hadoop |
-| `KRB5_REALM` | Kerberos realm | kdc, hadoop, hive, spark |
-| `KRB5_KDC_PASSWORD` | KDC database master password | kdc |
+| `MYSQL_PASSWORD` | Metastore database password (required) | mysql, hive |
+| `KRB5_KDC_PASSWORD` | KDC database master password (required) | kdc |
 | `TZ` | Timezone for all containers | all |
 
 ## Known Issues & Solutions
@@ -224,10 +224,9 @@ All configurable via `.env`. Secrets are injected at runtime — no credentials 
 | First-run failure residue | Run `make clean` to clear volumes before retrying |
 | Filesystem closed IOException | `fs.hdfs.impl.disable.cache=true` in `core-site.xml` prevents shared DFSClient closure |
 | Docker DNS `_HOST` mismatch | All service URIs use FQDN (`.hive-net`); `domainname: hive-net` set in compose |
-| SASL fallback to DIGEST-MD5 | `hive.server2.enable.doAs=false` keeps Spark's Kerberos Subject on MetaStore calls |
 | Executor Kerberos auth | Solved via YARN mode — YARN auto-distributes delegation tokens to Executors |
 
-> **Note**: `spark/` directory contains copies of `core-site.xml`, `hdfs-site.xml`, `yarn-site.xml`, and `mapred-site.xml` from `hadoop/`. If you modify Hadoop config, update both locations.
+> **Note**: `spark/{core,hdfs,yarn,mapred}-site.xml` are **generated** copies of the files in `hadoop/` — edit `hadoop/` only; `make build` runs `sync-conf` to keep them identical. `spark/hive-site.xml` is Spark-specific and not synced.
 
 ## Lifecycle
 
@@ -258,9 +257,10 @@ This deployment is intended for local development and testing:
 - All services run as root inside containers
 - Kerberos realm uses a test domain (`EXAMPLE.COM`)
 - `ignore.secure.ports.for.testing=true` allows unprivileged HDFS ports
-- `hive.server2.enable.doAs=false` — no per-user impersonation
+- All queries run as the `spark` service principal — no per-user impersonation
 - Proxy user restrictions are fully open (`hadoop.proxyuser.*.hosts=*`)
 - Spark Connect Server runs in YARN client mode with dynamic allocation (0–3 executors), managed by the NodeManager
+- ResourceManager / NodeManager run as background daemons inside the namenode / datanode containers; if one of them dies the container turns unhealthy but is **not** auto-restarted — run `make restart`
 
 Do **not** use this configuration in production.
 

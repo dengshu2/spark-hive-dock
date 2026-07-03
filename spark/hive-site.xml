@@ -24,28 +24,8 @@
         <name>hive.metastore.kerberos.principal</name>
         <value>hive/_HOST@EXAMPLE.COM</value>
     </property>
-    
 
-    <!-- Thrift Server authentication -->
-    <property>
-        <name>hive.server2.authentication</name>
-        <value>KERBEROS</value>
-    </property>
-    <property>
-        <name>hive.server2.authentication.kerberos.principal</name>
-        <value>spark/_HOST@EXAMPLE.COM</value>
-    </property>
-    <property>
-        <name>hive.server2.authentication.kerberos.keytab</name>
-        <value>/etc/security/keytabs/spark.keytab</value>
-    </property>
-
-    <!-- Disable user impersonation for MetaStore calls.
-         When enabled, Thrift Server impersonates the connecting user,
-         but the impersonated user has no Kerberos TGT in Docker.
-         With doAs=false, Spark uses its own service principal. -->
-    <property>
-        <name>hive.server2.enable.doAs</name>
-        <value>false</value>
-    </property>
+    <!-- The hive.server2.* block (KERBEROS auth, enable.doAs=false) that used
+         to live here served the retired Spark Thrift Server; nothing in the
+         Spark Connect / spark-sql paths reads those properties. Removed. -->
 </configuration>

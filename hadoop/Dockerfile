@@ -48,9 +48,10 @@ ENV HADOOP_OPTS="--add-opens java.base/java.lang=ALL-UNNAMED \
 # With dfs.data.transfer.protection=authentication (SASL), the DataNode
 # uses unprivileged ports and does not need the secure user mechanism.
 # NOTE: Spark External Shuffle Service (yarn.nodemanager.aux-services=spark_shuffle)
-# is intentionally not configured. This cluster uses fixed executor count
-# (spark.executor.instances=1) with no dynamic allocation, so the external
-# shuffle service is not required.
+# is intentionally not configured. Dynamic allocation on the Spark Connect
+# Server uses driver-side shuffle tracking instead
+# (spark.dynamicAllocation.shuffleTracking.enabled=true in spark-defaults.conf),
+# so the NodeManager needs no spark_shuffle aux-service.
 
 # Install dependencies (includes Kerberos client)
 RUN apt-get update && apt-get install -y --no-install-recommends \
