@@ -13,6 +13,8 @@
 #   - datanode        : HDFS DataNode + YARN NodeManager
 #   - hive-metastore  : Hive Metastore Service (metadata only)
 #   - spark-connect   : Spark Connect Server (gRPC, YARN client)
+#   - spark-history   : Spark History Server (Event Logs on HDFS)
+#   - spark-eventlog-collector : Incremental HDFS -> Vector collector
 #
 # Usage:
 #   docker compose up -d --build
@@ -264,6 +266,110 @@ services:
       - hive-net
     restart: unless-stopped
 
+  # --------------------------------------------------------
+  # Spark History Server (event logs on Kerberized HDFS)
+  # --------------------------------------------------------
+  spark-history:
+    image: spark-hive-custom:${SPARK_VERSION:-4.1.2}
+    container_name: spark-history
+    init: true
+    entrypoint: ["/entrypoint-history.sh"]
+    hostname: spark-history
+    domainname: hive-net
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      SPARK_DAEMON_MEMORY: 512m
+    ports:
+      - "127.0.0.1:18080:18080" # Spark History Server UI
+    volumes:
+      - keytabs:/etc/security/keytabs:ro
+      - ./kdc/krb5.conf:/etc/krb5.conf:ro
+    depends_on:
+      kdc:
+        condition: service_healthy
+      namenode:
+        condition: service_healthy
+      spark-connect:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:18080/api/v1/applications >/dev/null"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 768M
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - hive-net
+    restart: unless-stopped
+
+  # --------------------------------------------------------
+  # Spark Event Log Collector (HDFS -> Vector -> ClickHouse)
+  # --------------------------------------------------------
+  spark-eventlog-collector:
+    build:
+      context: .
+      dockerfile: collector/Dockerfile
+      args:
+        SPARK_IMAGE: spark-hive-custom:${SPARK_VERSION:-4.1.2}
+    image: spark-eventlog-collector:${SPARK_VERSION:-4.1.2}
+    container_name: spark-eventlog-collector
+    init: true
+    hostname: spark-eventlog-collector
+    domainname: hive-net
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      EVENTLOG_HDFS_LOG_DIR: hdfs://namenode.hive-net:9000/tmp/spark-events
+      EVENTLOG_STATE_PATH: /var/lib/spark-eventlog-collector/state.json
+      EVENTLOG_HEALTH_FILE: /var/lib/spark-eventlog-collector/health.json
+      EVENTLOG_VECTOR_URL: http://vector:8687/spark-eventlog
+      EVENTLOG_INTERVAL_SECONDS: 30
+      EVENTLOG_BATCH_SIZE: 250
+      EVENTLOG_HTTP_TIMEOUT: 120
+    volumes:
+      - keytabs:/etc/security/keytabs:ro
+      - ./kdc/krb5.conf:/etc/krb5.conf:ro
+      - eventlog-collector-state:/var/lib/spark-eventlog-collector
+    depends_on:
+      kdc:
+        condition: service_healthy
+      namenode:
+        condition: service_healthy
+      spark-history:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          python3 -c "import json,time;
+          p='/var/lib/spark-eventlog-collector/health.json';
+          d=json.load(open(p));
+          assert d['ok'];
+          assert time.time()-__import__('datetime').datetime.fromisoformat(d['checked_at']).timestamp()<150"
+      interval: 30s
+      timeout: 10s
+      retries: 4
+      start_period: 90s
+    deploy:
+      resources:
+        limits:
+          memory: 768M
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - hive-net
+    restart: unless-stopped
+
 # ============================================================
 # Volumes
 # ============================================================
@@ -277,6 +383,8 @@ volumes:
   keytabs:
     driver: local
   krb5kdc-data:
+    driver: local
+  eventlog-collector-state:
     driver: local
 
 # ============================================================

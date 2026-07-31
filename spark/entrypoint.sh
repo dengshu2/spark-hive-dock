@@ -64,6 +64,16 @@ wait_for_port namenode 9000 "HDFS NameNode" 60
 wait_for_port namenode 8032 "YARN ResourceManager" 60
 wait_for_port hive-metastore 9083 "Hive Metastore" 60
 
+# Event logging is initialized before SparkContext starts. Create the shared
+# HDFS directory here so a clean deployment cannot fail just because the
+# History Server has not started yet. /tmp is cluster-initialized as writable;
+# the sticky bit on the child directory protects application-owned logs.
+echo "[spark] Preparing HDFS event log directory ..."
+"${SPARK_HOME}/bin/spark-class" org.apache.hadoop.fs.FsShell \
+    -mkdir -p /tmp/spark-events
+"${SPARK_HOME}/bin/spark-class" org.apache.hadoop.fs.FsShell \
+    -chmod 1777 /tmp/spark-events
+
 # Start Spark Connect Server (foreground, keeps container alive)
 # YARN mode: Executors get delegation tokens automatically.
 # Spark 4.x BUNDLES the Spark Connect server (spark-connect_2.13 jar ships in

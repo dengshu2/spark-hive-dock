@@ -122,6 +122,7 @@ COPY hive-site.xml ${SPARK_HOME}/conf/hive-site.xml
 
 # Entrypoint
 COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+COPY entrypoint-history.sh /entrypoint-history.sh
+RUN chmod +x /entrypoint.sh /entrypoint-history.sh
 
 ENTRYPOINT ["/entrypoint.sh"]

@@ -51,6 +51,11 @@
 
 **数据流**: Spark Connect 客户端 (`sc://:15002`) → Spark Connect Server (YARN client) → Hive Metastore (元数据) → HDFS (数据存储)
 
+**监控流**:
+
+- 查看执行历史：Spark Event Log → HDFS `/tmp/spark-events` → Spark History Server (`:18080`)
+- SQL 日志入库：HDFS → Kerberos Collector → Vector HTTP/磁盘缓冲 → ClickHouse `spark_observability`
+
 ## 快速开始
 
 ```bash
@@ -75,7 +80,34 @@ bash scripts/init-test-data.sh
 
 # 7. 运行冒烟测试
 make test
+
+# 8. 初始化 ClickHouse SQL 日志表（首次部署执行一次）
+python3 scripts/spark-eventlog-collector.py --schema-only
+
+# 9. 运行 ODS → DWD → DWS → ADS Event Log 验收测试
+make test-eventlog
 ```
+
+> `spark-eventlog-collector` 依赖外部 Docker 网络 `db-sync-net` 上的 Vector 和 ClickHouse 栈。Vector 同时加入 `hive-net`，Collector 只访问 Vector，不持有 ClickHouse 密码。检查点保存在命名卷 `eventlog-collector-state`。
+>
+> HDFS Event Log 保留 30 天，ClickHouse SQL 事件保留 180 天；新增的可观测性容器采用 10 MiB × 3 文件的 Docker 日志滚动策略。
+
+### 查询 Spark SQL 日志
+
+```sql
+SELECT
+    app_id,
+    execution_id,
+    status,
+    duration_ms,
+    user_id,
+    sql_text
+FROM spark_observability.sql_executions
+ORDER BY start_time_ms DESC
+LIMIT 20;
+```
+
+可以运行 `make eventlog-status` 快速检查健康状态、数据新鲜度和重复事件。
 
 ### 连接 Spark Connect 客户端
 
@@ -131,6 +163,8 @@ spark.sql("SELECT * FROM sample_db.employees").show()
 | YARN RM (namenode) | `yarn/namenode.hive-net@EXAMPLE.COM` |
 | YARN NM (datanode) | `yarn/datanode.hive-net@EXAMPLE.COM` |
 | Spark Connect | `spark/spark-connect.hive-net@EXAMPLE.COM` |
+| Spark History Server | `spark/spark-history.hive-net@EXAMPLE.COM` |
+| Spark Event Log Collector | `spark/spark-eventlog-collector.hive-net@EXAMPLE.COM` |
 | HTTP (SPNEGO) | `HTTP/<service>.hive-net@EXAMPLE.COM` |
 
 > 所有服务使用 Docker FQDN（`.hive-net` 后缀）以实现 Kerberos `_HOST` principal 展开的一致性。`docker-compose.yml` 为每个服务设置了 `domainname: hive-net`。
@@ -152,13 +186,14 @@ spark.sql("SELECT * FROM sample_db.employees").show()
 | YARN ResourceManager | http://localhost:8088 |
 | YARN NodeManager | http://localhost:8042 |
 | Spark Application | http://localhost:4040 |
+| Spark History Server | http://localhost:18080 |
 
 ## 项目结构
 
 ```
 spark-hive-dock/
 ├── Makefile                  # 构建、启动、测试的统一入口
-├── docker-compose.yml        # 服务编排 (6 个容器)
+├── docker-compose.yml        # 服务编排 (8 个容器)
 ├── .env.example              # 环境变量模板
 ├── kdc/
 │   ├── Dockerfile            # MIT Kerberos KDC 镜像
@@ -183,7 +218,13 @@ spark-hive-dock/
 │   ├── mapred-site.xml       # MapReduce 配置 (与 hadoop/ 同步)
 │   ├── hive-site.xml         # MetaStore SASL 客户端配置
 │   ├── spark-defaults.conf   # YARN 模式 + Kerberos + Connect gRPC 端口
-│   └── entrypoint.sh         # Connect Server (YARN client) + kinit
+│   ├── entrypoint.sh         # Connect Server (YARN client) + kinit
+│   └── entrypoint-history.sh # History Server + Kerberos 启动
+├── collector/
+│   ├── Dockerfile            # Collector 镜像（Spark/Hadoop 客户端 + Python）
+│   └── entrypoint.sh         # kinit、票据续期和持续采集
+├── clickhouse/
+│   └── spark-eventlog.sql    # 原始事件表 + SQL 执行归一化视图
 ├── mysql/
 │   └── init.sql              # Metastore 数据库字符集配置
 └── scripts/
@@ -191,6 +232,8 @@ spark-hive-dock/
     ├── spark-sql-shell.sh          # 交互式 spark-sql shell (Kerberos)
     ├── init-test-data.sh           # 示例数据库和表 (Kerberos 版)
     ├── init-more-tables.sh         # 额外测试表：products / dim_category / user_behavior
+    ├── spark-eventlog-collector.py # Event Log 增量采集、检查点和 Vector 投递
+    ├── test-eventlog-warehouse.py  # ODS → DWD → DWS → ADS 端到端验证
     └── init-hive-for-clickhouse.sh # hive_db.orders / user_profiles（Parquet，供 ClickHouse 使用）
 ```
 

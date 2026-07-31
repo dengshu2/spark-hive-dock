@@ -51,6 +51,11 @@ Dockerized Spark SQL cluster with Hive Metastore on Hadoop HDFS, secured with **
 
 **Data flow**: Spark Connect client (`sc://:15002`) → Spark Connect Server (YARN client) → Hive Metastore (schema) → HDFS (data storage)
 
+**Monitoring flows**:
+
+- Execution history: Spark Event Log → HDFS `/tmp/spark-events` → Spark History Server (`:18080`)
+- SQL log ingestion: HDFS → Kerberos Collector → Vector HTTP/disk buffer → ClickHouse `spark_observability`
+
 ## Quick Start
 
 ```bash
@@ -75,7 +80,34 @@ bash scripts/init-test-data.sh
 
 # 7. Run smoke test
 make test
+
+# 8. Initialize ClickHouse SQL log tables (once per deployment)
+python3 scripts/spark-eventlog-collector.py --schema-only
+
+# 9. Run the ODS -> DWD -> DWS -> ADS Event Log acceptance test
+make test-eventlog
 ```
+
+> `spark-eventlog-collector` expects the external Vector and ClickHouse stacks on `db-sync-net`. Vector also joins `hive-net`; the Collector only talks to Vector and never receives ClickHouse credentials. Its checkpoint is stored in the `eventlog-collector-state` named volume.
+>
+> HDFS Event Logs are retained for 30 days, ClickHouse SQL events for 180 days, and the new observability containers rotate Docker logs at 10 MiB × 3 files.
+
+### Querying Spark SQL logs
+
+```sql
+SELECT
+    app_id,
+    execution_id,
+    status,
+    duration_ms,
+    user_id,
+    sql_text
+FROM spark_observability.sql_executions
+ORDER BY start_time_ms DESC
+LIMIT 20;
+```
+
+Use `make eventlog-status` for a quick health, freshness, and duplicate check.
 
 ### Connecting a Spark Connect client
 
@@ -131,6 +163,8 @@ The cluster uses MIT Kerberos for authentication across all services. The KDC co
 | YARN RM (namenode) | `yarn/namenode.hive-net@EXAMPLE.COM` |
 | YARN NM (datanode) | `yarn/datanode.hive-net@EXAMPLE.COM` |
 | Spark Connect | `spark/spark-connect.hive-net@EXAMPLE.COM` |
+| Spark History Server | `spark/spark-history.hive-net@EXAMPLE.COM` |
+| Spark Event Log Collector | `spark/spark-eventlog-collector.hive-net@EXAMPLE.COM` |
 | HTTP (SPNEGO) | `HTTP/<service>.hive-net@EXAMPLE.COM` |
 
 > All services use Docker FQDN (`.hive-net` suffix) for consistent Kerberos `_HOST` principal expansion. The `docker-compose.yml` sets `domainname: hive-net` on every service.
@@ -152,13 +186,14 @@ The cluster uses MIT Kerberos for authentication across all services. The KDC co
 | YARN ResourceManager | http://localhost:8088 |
 | YARN NodeManager | http://localhost:8042 |
 | Spark Application | http://localhost:4040 |
+| Spark History Server | http://localhost:18080 |
 
 ## Project Structure
 
 ```
 spark-hive-dock/
 ├── Makefile                  # Build, start, and test entry point
-├── docker-compose.yml        # Service orchestration (6 containers)
+├── docker-compose.yml        # Service orchestration (8 containers)
 ├── .env.example              # Environment template
 ├── kdc/
 │   ├── Dockerfile            # MIT Kerberos KDC image
@@ -183,7 +218,13 @@ spark-hive-dock/
 │   ├── mapred-site.xml       # MapReduce config (synced from hadoop/)
 │   ├── hive-site.xml         # MetaStore SASL client config
 │   ├── spark-defaults.conf   # YARN mode + Kerberos + Connect gRPC port
-│   └── entrypoint.sh         # Connect Server (YARN client) + kinit
+│   ├── entrypoint.sh         # Connect Server (YARN client) + kinit
+│   └── entrypoint-history.sh # History Server + Kerberos startup
+├── collector/
+│   ├── Dockerfile            # Collector image (Spark/Hadoop client + Python)
+│   └── entrypoint.sh         # kinit, ticket renewal, and continuous collection
+├── clickhouse/
+│   └── spark-eventlog.sql    # Raw event table + normalized SQL execution view
 ├── mysql/
 │   └── init.sql              # Metastore DB charset config
 └── scripts/
@@ -191,6 +232,8 @@ spark-hive-dock/
     ├── spark-sql-shell.sh          # Interactive spark-sql shell (Kerberos)
     ├── init-test-data.sh           # Sample database + table (Kerberized)
     ├── init-more-tables.sh         # Extra test tables: products / dim_category / user_behavior
+    ├── spark-eventlog-collector.py # Incremental Event Log collection and Vector delivery
+    ├── test-eventlog-warehouse.py  # ODS → DWD → DWS → ADS end-to-end validation
     └── init-hive-for-clickhouse.sh # hive_db.orders / user_profiles (Parquet, for ClickHouse)
 ```
 

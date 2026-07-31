@@ -8,6 +8,7 @@
 #   make down    — stop and remove containers
 #   make clean   — stop, remove containers, volumes, and images
 #   make test    — run smoke test via spark-sql (local mode)
+#   make test-eventlog — validate ODS -> DWD -> DWS -> ADS log ingestion
 #   make kinit   — verify Kerberos tickets on all services
 #   make logs    — follow all service logs
 #   make status  — show service health status
@@ -18,7 +19,7 @@
 # `| tail`.
 SHELL := /bin/bash
 
-.PHONY: build up down clean test kinit logs status restart sync-conf
+.PHONY: build up down clean test test-eventlog eventlog-status kinit logs status restart sync-conf
 
 # -- Config sync -----------------------------------------
 # hadoop/ is the single source of truth for the shared HDFS/YARN/MapReduce/core
@@ -42,15 +43,18 @@ sync-conf:
 # Step 3: hive-metastore (FROM hadoop-base)
 # Step 4: spark (COPY --from hive-metastore for the 4.1.0 client jars, so it
 #         must be built AFTER hive-metastore — not in parallel)
+# Step 5: event log collector (small Python layer on top of the Spark image)
 build: sync-conf
-	@echo "=== [1/4] Building KDC ==="
+	@echo "=== [1/5] Building KDC ==="
 	docker compose build kdc
-	@echo "=== [2/4] Building hadoop-base (HDFS + YARN) ==="
+	@echo "=== [2/5] Building hadoop-base (HDFS + YARN) ==="
 	docker compose build namenode
-	@echo "=== [3/4] Building hive-metastore ==="
+	@echo "=== [3/5] Building hive-metastore ==="
 	docker compose build hive-metastore
-	@echo "=== [4/4] Building spark (uses hive-metastore jars) ==="
+	@echo "=== [4/5] Building spark (uses hive-metastore jars) ==="
 	docker compose build spark-connect
+	@echo "=== [5/5] Building Spark Event Log collector ==="
+	docker compose build spark-eventlog-collector
 
 # -- Lifecycle -------------------------------------------
 up: build
@@ -90,6 +94,12 @@ kinit:
 	@echo ""
 	@echo "--- Spark Connect ---"
 	@docker exec spark-connect klist 2>/dev/null || echo "No ticket"
+	@echo ""
+	@echo "--- Spark History Server ---"
+	@docker exec spark-history klist 2>/dev/null || echo "No ticket"
+	@echo ""
+	@echo "--- Spark Event Log Collector ---"
+	@docker exec spark-eventlog-collector klist 2>/dev/null || echo "No ticket"
 
 # -- YARN Status ------------------------------------------
 yarn-status:
@@ -116,6 +126,25 @@ test:
 		2>&1 | tail -20 \
 		|| { echo "=== Smoke test FAILED ==="; exit 1; }
 	@echo "=== Smoke test passed ==="
+
+# Runs an isolated ODS -> DWD -> DWS -> ADS workload through Spark Connect,
+# then waits for the Collector and validates SQL/plan completeness and
+# event-key uniqueness in ClickHouse.
+test-eventlog:
+	@command -v uv >/dev/null || { echo "ERROR: uv is required"; exit 1; }
+	@command -v chsql >/dev/null || { echo "ERROR: chsql login is required"; exit 1; }
+	uv run --with "pyspark[connect]==4.1.2" scripts/test-eventlog-warehouse.py
+
+eventlog-status:
+	@docker compose ps spark-history spark-eventlog-collector
+	@chsql query --format table "\
+		SELECT count() AS raw_rows, uniqExact(event_key) AS unique_events, \
+		       max(collected_at) AS last_collected_at \
+		FROM spark_observability.sql_events"
+	@chsql query --format table "\
+		SELECT count() AS executions, countIf(status = 'RUNNING') AS running, \
+		       countIf(status = 'FAILED') AS failed \
+		FROM spark_observability.sql_executions"
 
 # -- Internal helpers ------------------------------------
 # Waits until every service defined in docker-compose.yml reports (healthy).

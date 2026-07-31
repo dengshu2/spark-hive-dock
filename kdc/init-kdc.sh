@@ -113,6 +113,14 @@ create_principal "spark/spark-connect.${DOCKER_DOMAIN}@${REALM}"
 create_principal "HTTP/spark-connect@${REALM}"
 create_principal "HTTP/spark-connect.${DOCKER_DOMAIN}@${REALM}"
 
+# Spark History Server
+create_principal "spark/spark-history@${REALM}"
+create_principal "spark/spark-history.${DOCKER_DOMAIN}@${REALM}"
+
+# Spark Event Log Collector
+create_principal "spark/spark-eventlog-collector@${REALM}"
+create_principal "spark/spark-eventlog-collector.${DOCKER_DOMAIN}@${REALM}"
+
 # Client (for testing / interactive sessions)
 create_principal "client@${REALM}"
 
@@ -172,6 +180,16 @@ kadmin.local -q "ktadd -norandkey -k ${KEYTAB_DIR}/spark.keytab \
     spark/spark-connect.${DOCKER_DOMAIN}@${REALM} \
     HTTP/spark-connect@${REALM} \
     HTTP/spark-connect.${DOCKER_DOMAIN}@${REALM}"
+
+# Spark History Server keytab
+kadmin.local -q "ktadd -norandkey -k ${KEYTAB_DIR}/spark-history.keytab \
+    spark/spark-history@${REALM} \
+    spark/spark-history.${DOCKER_DOMAIN}@${REALM}"
+
+# Spark Event Log Collector keytab
+kadmin.local -q "ktadd -norandkey -k ${KEYTAB_DIR}/spark-eventlog-collector.keytab \
+    spark/spark-eventlog-collector@${REALM} \
+    spark/spark-eventlog-collector.${DOCKER_DOMAIN}@${REALM}"
 
 # Client keytab (for testing)
 kadmin.local -q "ktadd -norandkey -k ${KEYTAB_DIR}/client.keytab \
