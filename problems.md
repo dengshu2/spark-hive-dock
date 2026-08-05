@@ -1,8 +1,36 @@
 # Kerberos 集成问题清单
 
 > **项目**: `spark-hive-dock` — Spark + Hive Metastore + HDFS Docker 集群 + MIT Kerberos + YARN
-> **日期**: 2026-03-26（2026-06-30 升级至 Spark 4.1.2 / Hive 4.1.0 / Hadoop 3.5.0 全栈 JDK17）
-> **当前状态**: ✅ Spark on YARN 模式稳定运行；✅ 4.x 全栈升级完成并端到端验证（见文末「版本升级」章节）
+> **日期**: 2026-03-26（2026-08-05 依赖维护至 Spark 4.1.3，Hive 4.1.0 / Hadoop 3.5.0 保持不变）
+> **当前状态**: ✅ Spark on YARN 模式稳定运行；✅ 依赖升级、校验和固定及端到端验证完成
+
+---
+
+## 依赖维护（2026-08-05）
+
+本轮只处理有明确收益且已完成回归的升级，避免为追新而改动整套兼容矩阵：
+
+| 依赖 | 处理 | 原因 |
+|---|---|---|
+| Spark | 4.1.2 → **4.1.3** | 同一 4.1 维护线的安全性、正确性与稳定性修复 |
+| MySQL Connector/J | 9.1.0 → **9.7.0** | 仅 Hive Metastore 需要；Spark 通过 Thrift 访问 HMS，不需要直连 MySQL |
+| ClickHouse JDBC | 0.7.2 → **0.9.8** | 升级当前驱动并完成真实 Hive→ClickHouse 同步回归 |
+| Iceberg | 保持 **1.11.0** | 已是当前 Spark 4.1 / Scala 2.13 适配版本，升级无收益 |
+| Hive / Hadoop | 保持 **4.1.0 / 3.5.0** | 当前兼容组合稳定，本轮没有必要扩大升级面 |
+
+同时为 Spark 发布包、ClickHouse JDBC、Iceberg runtime 和 Connector/J 固定并验证
+SHA-512/SHA-256；缓存文件同样必须通过校验，避免旧缓存或损坏下载被误用。
+Spark 镜像中已移除 Connector/J，包括复制进来的 Hive 客户端隔离目录，仅 Hive
+Metastore 镜像保留该驱动。
+
+### 验证（全部通过）
+
+- `make test`：Kerberos SASL、Hive 4.1 HMS、建表/插入/查询/删除。
+- Spark Connect 4.1.3：版本、SQL 与数据库枚举。
+- Iceberg 1.11.0：建表、写入、聚合、snapshot 元数据和清理。
+- ClickHouse JDBC 0.9.8：异步同步 3 行，`BIGINT`、`DECIMAL`、`STRING` 核对一致。
+- `make test-eventlog`：ODS/DWD/DWS/ADS 为 5/3/2/2 行；13 个执行、350 条去重事件，
+  `failed=0`、`without_plan=0`。
 
 ---
 

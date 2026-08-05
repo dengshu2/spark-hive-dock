@@ -10,7 +10,7 @@ Dockerized Spark SQL cluster with Hive Metastore on Hadoop HDFS, secured with **
 |-----------|---------|-----|
 | Hadoop | 3.5.0 | OpenJDK 17 (Temurin) |
 | Hive Metastore | 4.1.0 | OpenJDK 17 (Temurin) |
-| Spark | 4.1.2 | OpenJDK 17 (Temurin) |
+| Spark | 4.1.3 | OpenJDK 17 (Temurin) |
 | MySQL | 8.0 | — |
 | MIT Kerberos (KDC) | Debian bookworm | — |
 
@@ -114,7 +114,7 @@ Use `make eventlog-status` for a quick health, freshness, and duplicate check.
 The cluster exposes the **Spark Connect Server** on `127.0.0.1:15002` (gRPC). From the host:
 
 ```bash
-pip install "pyspark[connect]==4.1.2"
+pip install "pyspark[connect]==4.1.3"
 ```
 
 ```python
@@ -211,7 +211,7 @@ spark-hive-dock/
 │   ├── hive-site.xml         # Metastore SASL/GSSAPI authentication
 │   └── entrypoint-metastore.sh  # Kerberized startup sequence
 ├── spark/
-│   ├── Dockerfile            # Spark 4.1.2 + Connect Server (bundled) + krb5-user (JDK 17)
+│   ├── Dockerfile            # Spark 4.1.3 + Connect Server (bundled) + krb5-user (JDK 17)
 │   ├── core-site.xml         # HDFS + Kerberos + proxy user config
 │   ├── hdfs-site.xml         # HDFS Kerberos principals (synced from hadoop/)
 │   ├── yarn-site.xml         # YARN client config (synced from hadoop/)

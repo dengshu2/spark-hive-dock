@@ -6,7 +6,7 @@
 # app spin-up. Replaces the old beeline/Thrift JDBC shell.
 #
 # For a programmatic Spark Connect client instead:
-#   pip install "pyspark[connect]==4.1.2"
+#   pip install "pyspark[connect]==4.1.3"
 #   from pyspark.sql import SparkSession
 #   spark = SparkSession.builder.remote("sc://localhost:15002").getOrCreate()
 #   spark.sql("SHOW DATABASES").show()

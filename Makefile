@@ -133,7 +133,7 @@ test:
 test-eventlog:
 	@command -v uv >/dev/null || { echo "ERROR: uv is required"; exit 1; }
 	@command -v chsql >/dev/null || { echo "ERROR: chsql login is required"; exit 1; }
-	uv run --with "pyspark[connect]==4.1.2" scripts/test-eventlog-warehouse.py
+	uv run --with "pyspark[connect]==4.1.3" scripts/test-eventlog-warehouse.py
 
 eventlog-status:
 	@docker compose ps spark-history spark-eventlog-collector

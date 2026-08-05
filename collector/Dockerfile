@@ -1,4 +1,4 @@
-ARG SPARK_IMAGE=spark-hive-custom:4.1.2
+ARG SPARK_IMAGE=spark-hive-custom:4.1.3
 FROM ${SPARK_IMAGE}
 
 USER root

@@ -10,7 +10,7 @@
 |------|------|-----|
 | Hadoop | 3.5.0 | OpenJDK 17 (Temurin) |
 | Hive Metastore | 4.1.0 | OpenJDK 17 (Temurin) |
-| Spark | 4.1.2 | OpenJDK 17 (Temurin) |
+| Spark | 4.1.3 | OpenJDK 17 (Temurin) |
 | MySQL | 8.0 | — |
 | MIT Kerberos (KDC) | Debian bookworm | — |
 
@@ -114,7 +114,7 @@ LIMIT 20;
 集群在 `127.0.0.1:15002`（gRPC）暴露 **Spark Connect Server**。在宿主机上：
 
 ```bash
-pip install "pyspark[connect]==4.1.2"
+pip install "pyspark[connect]==4.1.3"
 ```
 
 ```python
@@ -211,7 +211,7 @@ spark-hive-dock/
 │   ├── hive-site.xml         # Metastore SASL/GSSAPI 认证
 │   └── entrypoint-metastore.sh  # Kerberos 化启动流程
 ├── spark/
-│   ├── Dockerfile            # Spark 4.1.2 + Connect Server (bundled) + krb5-user (JDK 17)
+│   ├── Dockerfile            # Spark 4.1.3 + Connect Server (bundled) + krb5-user (JDK 17)
 │   ├── core-site.xml         # HDFS + Kerberos + 代理用户配置
 │   ├── hdfs-site.xml         # HDFS Kerberos principals (与 hadoop/ 同步)
 │   ├── yarn-site.xml         # YARN 客户端配置 (与 hadoop/ 同步)
