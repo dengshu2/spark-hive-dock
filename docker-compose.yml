@@ -170,6 +170,7 @@ services:
           memory: 5g
     networks:
       - hive-net
+      - analytics-sync-net
     restart: unless-stopped
 
   # --------------------------------------------------------
@@ -394,3 +395,6 @@ networks:
   hive-net:
     driver: bridge
     name: hive-net
+  analytics-sync-net:
+    external: true
+    name: analytics-sync-net
